@@ -819,6 +819,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 - [Apache NiFi](https://nifi.apache.org/) community
 - [Kubernetes](https://kubernetes.io/) project
+- [cetic/helm-nifi](https://github.com/cetic/helm-nifi) cetic/helm-nifi
 - [Helm](https://helm.sh/) maintainers
 - All [contributors](https://github.com/sakkiii/apache-nifi-helm/graphs/contributors)
 
