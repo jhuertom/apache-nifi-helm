@@ -361,7 +361,7 @@ volumeClaims:
   provenance:
     storageClass: "nfs-client"
     size: "10Gi"
-  python_extensions:
+  python-extensions:
     storageClass: "nfs-client"
     size: "5Gi"
 
