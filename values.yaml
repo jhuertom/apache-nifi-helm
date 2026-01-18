@@ -344,23 +344,26 @@ umask: "" # "0002"
 
 volumeClaims:
   config:
-    storageClass: "gp3"
+    storageClass: "nfs-client"
     size: "5Gi"
   state:
-    storageClass: "gp3"
+    storageClass: "nfs-client"
     size: "10Gi"
   logs:
-    storageClass: "gp3"
+    storageClass: "nfs-client"
     size: "2Gi"
   flowfile:
-    storageClass: "gp3"
+    storageClass: "nfs-client"
     size: "10Gi"
   content:
-    storageClass: "gp3"
+    storageClass: "nfs-client"
     size: "15Gi"
   provenance:
-    storageClass: "gp3"
+    storageClass: "nfs-client"
     size: "10Gi"
+  python_extensions:
+    storageClass: "nfs-client"
+    size: "5Gi"
 
 probeTimings:
   startup:

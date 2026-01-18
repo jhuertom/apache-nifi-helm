@@ -217,6 +217,8 @@ spec:
               mountPath: {{ $nifiHome }}/content_repo
             - name: provenance
               mountPath: {{ $nifiHome }}/provenance_repo
+            - name: python_extensions
+              mountPath: {{ $nifiHome }}/python_extensions
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
