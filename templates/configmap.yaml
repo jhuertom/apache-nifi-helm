@@ -222,16 +222,19 @@ data:
     {{- end }}
     
     # Configure the managed-authorizer to use ldap-user-group-provider
-    xmlstarlet ed --inplace \
-      --update "//authorizer[id='managed-authorizer']/property[@name='User Group Provider']" \
-      --value 'ldap-user-group-provider' \
-      "${authorizers_file}"
+    echo "Configuring managed-authorizer to use ldap-user-group-provider..."
+    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">ldap-user-group-provider</property>|g" "${authorizers_file}"
     
     {{- if .Values.global.ldap.initialAdminIdentity }}
     # Configure Initial Admin Identity in managed-authorizer - CRITICAL for first login
     echo "Configuring Initial Admin Identity in managed-authorizer: {{ .Values.global.ldap.initialAdminIdentity }}"
     sed -i -E "s|<property name=\"Initial Admin Identity\"/>|<property name=\"Initial Admin Identity\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
     sed -i -E "s|<property name=\"Initial Admin Identity\"></property>|<property name=\"Initial Admin Identity\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
+    
+    # Verificar que se aplicó correctamente
+    echo "Verificando configuración..."
+    grep "User Group Provider" "${authorizers_file}" | grep -v "<!--"
+    grep "Initial Admin Identity" "${authorizers_file}" | grep -v "<!--" | grep "property"
     {{- else }}
     echo "WARNING: No Initial Admin Identity configured. You may not have access after first login."
     {{- end }}
