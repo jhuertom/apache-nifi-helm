@@ -113,7 +113,10 @@ data:
     echo "Configuring authorizers.xml for LDAP authentication..."
     
     # First, enable (uncomment) the ldap-user-group-provider
-    sed -i -E '/<\!-- To enable the ldap-user-group-provider/,/To enable the ldap-user-group-provider -->/s/<!--(.*)-->/\1/' "${authorizers_file}"
+    # Remove the comment markers around ldap-user-group-provider
+    sed -i -e '/To enable the ldap-user-group-provider remove 2 lines. This is 1 of 2./d' \
+           -e '/To enable the ldap-user-group-provider remove 2 lines. This is 2 of 2./d' \
+           "${authorizers_file}"
     
     # Configure the ldap-user-group-provider
     xmlstarlet ed --inplace \
