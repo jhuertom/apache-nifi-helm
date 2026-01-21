@@ -100,13 +100,7 @@ data:
       sed -i -E "s|(<property name=\"$1 1\">.*</property>)|\1\n${node_identities}|g" "${authorizers_file}"
     }
     list_identities 'Node Identity'
-    list_identities 'Initial User Identity'
-
-    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-    # Add LDAP admin to file provider Initial User Identity so policies can be seeded
-    echo "Adding LDAP admin to file provider Initial User Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
-    sed -i -E "s|(<property name=\"Initial User Identity 1\">.*</property>)|\1\n<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
-    {{- end }}
+    # Don't add Initial User Identity - with LDAP, users come from LDAP provider only
 
     {{- /* Configure authorizers.xml for LDAP authentication */}}
     {{- if .Values.global.ldap.enabled }}
@@ -233,21 +227,9 @@ data:
     {{- end }}
     {{- end }}
     
-    # Enable CompositeConfigurableUserGroupProvider
-    echo "Enabling CompositeConfigurableUserGroupProvider for LDAP + file providers..."
-    sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
-    sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
-    
-    # Configurable User Group Provider must be file-user-group-provider (only one that's configurable)
-    # Add ldap as User Group Provider 1 (readonly)
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
-      --value 'ldap-user-group-provider' \
-      "${authorizers_file}"
-    
-    # Configure the managed-authorizer to use composite-configurable-user-group-provider
-    echo "Configuring managed-authorizer to use composite-configurable-user-group-provider..."
-    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
+    # For LDAP, use ldap-user-group-provider directly (no composite needed for simple LDAP)
+    echo "Configuring managed-authorizer to use ldap-user-group-provider..."
+    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">ldap-user-group-provider</property>|g" "${authorizers_file}"
     
     # Set Initial Admin Identity to the LDAP admin user
     echo "Setting Initial Admin Identity to: {{ .Values.global.ldap.initialAdminIdentity }}"
@@ -255,6 +237,10 @@ data:
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
       --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
+    
+    # Add node identities as Initial User Identities in file-access-policy-provider (not in user group provider)
+    # These are for the node certificates, not LDAP users
+    echo "Node identities configured via Node Identity properties in file-access-policy-provider"
     
     echo "LDAP configuration in authorizers.xml completed."
     {{- end }}
