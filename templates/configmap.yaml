@@ -75,6 +75,15 @@ data:
       done
       ingress_dn="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
       node_identities="${node_identities}<property name=\"$1 Node-Ingress\">${ingress_dn}</property>\n"
+      
+      {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
+      # Add LDAP admin user as Initial User Identity when LDAP is enabled
+      if [ "$1" = "Initial User Identity" ]; then
+        node_identities="${node_identities}<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
+        echo "Adding LDAP Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
+      fi
+      {{- end }}
+      
       sed -i -E "s|(<property name=\"$1 1\">.*</property>)|\1\n${node_identities}|g" "${authorizers_file}"
     }
     list_identities 'Node Identity'
