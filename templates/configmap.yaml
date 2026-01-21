@@ -238,14 +238,11 @@ data:
     sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
     sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
     
-    # Configure composite provider to use both file and LDAP
+    # Configure composite provider to add LDAP as User Group Provider 1
+    # Note: "Configurable User Group Provider" already points to file-user-group-provider
+    # We only need to set User Group Provider 1 to ldap-user-group-provider
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
-      --value 'file-user-group-provider' \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 2']" \
       --value 'ldap-user-group-provider' \
       "${authorizers_file}"
     
