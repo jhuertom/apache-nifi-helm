@@ -57,6 +57,22 @@ data:
     prop_add 'nifi.remote.route.http.ingress.port' '443'
     prop_add 'nifi.remote.route.http.ingress.secure' 'true'
 
+    {{- /* Configure authentication method based on priority: OIDC > LDAP > Basic */}}
+    {{- if .Values.global.oidc.enabled }}
+    echo "Enabling OIDC authentication"
+    prop_replace 'nifi.security.user.oidc.discovery.url' '{{ .Values.global.oidc.oidc_url }}'
+    prop_replace 'nifi.security.user.oidc.client.id' '{{ .Values.global.oidc.client_id }}'
+    prop_replace 'nifi.security.user.oidc.claim.identifying.user' '{{ .Values.global.oidc.claim_identifying_user }}'
+    {{- else if .Values.global.ldap.enabled }}
+    echo "Enabling LDAP user authentication"
+    prop_replace 'nifi.security.user.authorizer' 'managed-authorizer'
+    prop_replace 'nifi.security.user.login.identity.provider' 'ldap-provider'
+    {{- else }}
+    echo "Enabling Single User (Basic) authentication"
+    prop_replace 'nifi.security.user.authorizer' 'single-user-authorizer'
+    prop_replace 'nifi.security.user.login.identity.provider' 'single-user-provider'
+    {{- end }}
+
     {{- /* Replace properties not exposed by environment variables */}}
     {{- if eq (include "nifi.useZooKeeper" .) "true" }}
     prop_replace 'nifi.zookeeper.client.secure' 'false'
