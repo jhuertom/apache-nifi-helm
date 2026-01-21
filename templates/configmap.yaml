@@ -112,6 +112,9 @@ data:
     {{- if .Values.global.ldap.enabled }}
     echo "Configuring authorizers.xml for LDAP authentication..."
     
+    # First, enable (uncomment) the ldap-user-group-provider
+    sed -i -E '/<\!-- To enable the ldap-user-group-provider/,/To enable the ldap-user-group-provider -->/s/<!--(.*)-->/\1/' "${authorizers_file}"
+    
     # Configure the ldap-user-group-provider
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Authentication Strategy']" \
