@@ -116,82 +116,90 @@ data:
     sed -i '/<!-- To enable the ldap-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
     sed -i '/To enable the ldap-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
     
-    # Configure the ldap-user-group-provider
+    echo "LDAP provider uncommented. Configuring properties..."
+    
+    # Configure the ldap-user-group-provider - CRITICAL: Must set Url first
+    echo "Setting LDAP URL: {{ .Values.global.ldap.url }}"
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Url']" \
+      --value '{{ .Values.global.ldap.url }}' \
+      "${authorizers_file}" || echo "ERROR: Failed to set LDAP URL"
+    
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Authentication Strategy']" \
       --value '{{ .Values.global.ldap.authenticationStrategy }}' \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Manager DN']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Manager DN']" \
       --value '{{ .Values.global.ldap.manager.distinguishedName }}' \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Manager Password']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Manager Password']" \
       --value "${LDAP_MANAGER_PASSWORD}" \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Protocol']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Protocol']" \
       --value '{{ .Values.global.ldap.tlsProtocol }}' \
       "${authorizers_file}"
     
     {{- if or (eq .Values.global.ldap.authenticationStrategy "LDAPS") (eq .Values.global.ldap.authenticationStrategy "START_TLS") }}
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Keystore']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Keystore']" \
       --value "${LDAP_TLS_KEYSTORE}" \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Keystore Password']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Keystore Password']" \
       --value "${LDAP_TLS_KEYSTORE_PASSWORD}" \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Keystore Type']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Keystore Type']" \
       --value 'PKCS12' \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Truststore']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Truststore']" \
       --value "${LDAP_TLS_TRUSTSTORE}" \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Truststore Password']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Truststore Password']" \
       --value "${LDAP_TLS_TRUSTSTORE_PASSWORD}" \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Truststore Type']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Truststore Type']" \
       --value 'PKCS12' \
       "${authorizers_file}"
     {{- end }}
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Url']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Url']" \
       --value '{{ .Values.global.ldap.url }}' \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='User Search Base']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='User Search Base']" \
       --value '{{ .Values.global.ldap.userSearchBase }}' \
       "${authorizers_file}"
     
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='User Search Filter']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='User Search Filter']" \
       --value '{{ .Values.global.ldap.userSearchFilter }}' \
       "${authorizers_file}"
     
     {{- if eq .Values.global.ldap.identityStrategy "USE_DN" }}
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Identity Strategy']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Identity Strategy']" \
       --value 'USE_DN' \
       "${authorizers_file}"
     {{- else }}
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Identity Strategy']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Identity Strategy']" \
       --value 'USE_USERNAME' \
       "${authorizers_file}"
     {{- end }}
@@ -199,27 +207,27 @@ data:
     {{- if .Values.global.ldap.groupSearchBase }}
     # Configure LDAP group synchronization
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Search Base']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Search Base']" \
       --value '{{ .Values.global.ldap.groupSearchBase }}' \
       "${authorizers_file}"
     
     {{- if .Values.global.ldap.groupSearchFilter }}
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Search Filter']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Search Filter']" \
       --value '{{ .Values.global.ldap.groupSearchFilter }}' \
       "${authorizers_file}"
     {{- end }}
     
     {{- if .Values.global.ldap.groupMembershipAttribute }}
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Membership - Enforce Case Sensitivity']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Membership - Enforce Case Sensitivity']" \
       --value 'false' \
       "${authorizers_file}"
     {{- end }}
     
     {{- if .Values.global.ldap.groupNameAttribute }}
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Name Attribute']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Name Attribute']" \
       --value '{{ .Values.global.ldap.groupNameAttribute }}' \
       "${authorizers_file}"
     {{- end }}
