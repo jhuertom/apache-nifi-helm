@@ -102,6 +102,12 @@ data:
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
 
+    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
+    # Add LDAP admin user as Initial User Identity in file provider so it exists at startup
+    echo "Adding LDAP admin to Initial User Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
+    sed -i -E "s|(<property name=\"Initial User Identity 1\">.*</property>)|\1\n<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
+    {{- end }}
+
     {{- /* Configure authorizers.xml for LDAP authentication */}}
     {{- if .Values.global.ldap.enabled }}
     echo "Configuring authorizers.xml for LDAP authentication..."
