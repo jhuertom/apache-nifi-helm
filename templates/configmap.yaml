@@ -112,15 +112,13 @@ data:
     {{- if .Values.global.ldap.enabled }}
     echo "Configuring authorizers.xml for LDAP authentication..."
     
-    # First, enable (uncomment) the ldap-user-group-provider
-    # Remove the comment markers around ldap-user-group-provider
-    sed -i -e '/To enable the ldap-user-group-provider remove 2 lines. This is 1 of 2./d' \
-           -e '/To enable the ldap-user-group-provider remove 2 lines. This is 2 of 2./d' \
-           "${authorizers_file}"
+    # Enable (uncomment) the ldap-user-group-provider - remove both comment lines
+    sed -i '/<!-- To enable the ldap-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
+    sed -i '/To enable the ldap-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
     
     # Configure the ldap-user-group-provider
     xmlstarlet ed --inplace \
-      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Authentication Strategy']" \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Authentication Strategy']" \
       --value '{{ .Values.global.ldap.authenticationStrategy }}' \
       "${authorizers_file}"
     
