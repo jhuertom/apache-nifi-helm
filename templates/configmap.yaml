@@ -199,6 +199,17 @@ data:
       --value 'ldap-user-group-provider' \
       "${authorizers_file}"
     
+    {{- if .Values.global.ldap.initialAdminIdentity }}
+    # Configure Initial Admin Identity - CRITICAL for first login
+    echo "Configuring Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
+    xmlstarlet ed --inplace \
+      --update "//authorizer[id='managed-authorizer']/property[@name='Initial Admin Identity']" \
+      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
+      "${authorizers_file}"
+    {{- else }}
+    echo "WARNING: No Initial Admin Identity configured. You may not have access after first login."
+    {{- end }}
+    
     echo "LDAP configuration in authorizers.xml completed."
     {{- end }}
 
