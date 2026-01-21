@@ -75,19 +75,16 @@ data:
       done
       ingress_dn="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
       node_identities="${node_identities}<property name=\"$1 Node-Ingress\">${ingress_dn}</property>\n"
-      
-      {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-      # Add LDAP admin user as Initial User Identity when LDAP is enabled
-      if [ "$1" = "Initial User Identity" ]; then
-        node_identities="${node_identities}<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
-        echo "Adding LDAP Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
-      fi
-      {{- end }}
-      
       sed -i -E "s|(<property name=\"$1 1\">.*</property>)|\1\n${node_identities}|g" "${authorizers_file}"
     }
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
+    
+    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
+    # Add LDAP admin as Initial User Identity (required for access policies)
+    echo "Adding LDAP Initial Admin Identity to authorizers: {{ .Values.global.ldap.initialAdminIdentity }}"
+    sed -i -E "s|(<property name=\"Initial User Identity 1\">.*</property>)|\1\n<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
+    {{- end }}
 
     {{- /* Configure authorizers.xml for LDAP authentication */}}
     {{- if .Values.global.ldap.enabled }}
@@ -209,12 +206,10 @@ data:
       "${authorizers_file}"
     
     {{- if .Values.global.ldap.initialAdminIdentity }}
-    # Configure Initial Admin Identity - CRITICAL for first login
-    echo "Configuring Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
-    xmlstarlet ed --inplace \
-      --update "//authorizer[id='managed-authorizer']/property[@name='Initial Admin Identity']" \
-      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
-      "${authorizers_file}"
+    # Configure Initial Admin Identity in managed-authorizer - CRITICAL for first login
+    echo "Configuring Initial Admin Identity in managed-authorizer: {{ .Values.global.ldap.initialAdminIdentity }}"
+    sed -i -E "s|<property name=\"Initial Admin Identity\"/>|<property name=\"Initial Admin Identity\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
+    sed -i -E "s|<property name=\"Initial Admin Identity\"></property>|<property name=\"Initial Admin Identity\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
     {{- else }}
     echo "WARNING: No Initial Admin Identity configured. You may not have access after first login."
     {{- end }}
