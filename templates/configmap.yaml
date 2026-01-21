@@ -101,12 +101,6 @@ data:
     }
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
-    
-    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-    # Add LDAP admin as Initial User Identity (required for access policies)
-    echo "Adding LDAP Initial Admin Identity to authorizers: {{ .Values.global.ldap.initialAdminIdentity }}"
-    sed -i -E "s|(<property name=\"Initial User Identity 1\">.*</property>)|\1\n<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
-    {{- end }}
 
     {{- /* Configure authorizers.xml for LDAP authentication */}}
     {{- if .Values.global.ldap.enabled }}
@@ -250,11 +244,13 @@ data:
     echo "Configuring managed-authorizer to use composite-configurable-user-group-provider..."
     sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
     
-    # NOTE: When using LDAP, we don't set Initial Admin Identity because:
-    # 1. The user is already added as "Initial User Identity Admin"
-    # 2. Setting Initial Admin Identity requires the user to exist in LDAP before NiFi starts
-    # 3. The Initial User Identity is sufficient to grant admin permissions
-    echo "LDAP Initial Admin configured via Initial User Identity Admin: {{ .Values.global.ldap.initialAdminIdentity }}"
+    # Set Initial Admin Identity for LDAP admin user
+    # With USE_USERNAME identity strategy, the identity is just the username
+    echo "Setting Initial Admin Identity to: {{ .Values.global.ldap.initialAdminIdentity }}"
+    xmlstarlet ed --inplace \
+      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
+      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
+      "${authorizers_file}"
     
     echo "LDAP configuration in authorizers.xml completed."
     {{- end }}
