@@ -59,6 +59,11 @@ global:
         key: ""
     userSearchBase: "" # DC=example,DC=com
     userSearchFilter: sAMAccountName={0}
+    # Optional: Group configuration for LDAP
+    groupSearchBase: "" # DC=example,DC=com (leave empty to disable group sync)
+    groupSearchFilter: "" # (member={0}) for Active Directory
+    groupMembershipAttribute: member # Attribute that identifies group members
+    groupNameAttribute: cn # Attribute that defines the group name
   
   # OpenID Connect (OIDC) Authentication
   oidc:

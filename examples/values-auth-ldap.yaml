@@ -29,6 +29,11 @@ global:
         key: "password"
     userSearchBase: "DC=example,DC=com"
     userSearchFilter: "sAMAccountName={0}"
+    # Optional: Group configuration (uncomment to enable group synchronization)
+    # groupSearchBase: "DC=example,DC=com"
+    # groupSearchFilter: "(member={0})"
+    # groupMembershipAttribute: "member"
+    # groupNameAttribute: "cn"
   
   # OIDC is disabled
   oidc:

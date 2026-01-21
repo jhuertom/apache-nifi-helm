@@ -80,6 +80,128 @@ data:
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
 
+    {{- /* Configure authorizers.xml for LDAP authentication */}}
+    {{- if .Values.global.ldap.enabled }}
+    echo "Configuring authorizers.xml for LDAP authentication..."
+    
+    # Configure the ldap-user-group-provider
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Authentication Strategy']" \
+      --value '{{ .Values.global.ldap.authenticationStrategy }}' \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Manager DN']" \
+      --value '{{ .Values.global.ldap.manager.distinguishedName }}' \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Manager Password']" \
+      --value "${LDAP_MANAGER_PASSWORD}" \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Protocol']" \
+      --value '{{ .Values.global.ldap.tlsProtocol }}' \
+      "${authorizers_file}"
+    
+    {{- if or (eq .Values.global.ldap.authenticationStrategy "LDAPS") (eq .Values.global.ldap.authenticationStrategy "START_TLS") }}
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Keystore']" \
+      --value "${LDAP_TLS_KEYSTORE}" \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Keystore Password']" \
+      --value "${LDAP_TLS_KEYSTORE_PASSWORD}" \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Keystore Type']" \
+      --value 'PKCS12' \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Truststore']" \
+      --value "${LDAP_TLS_TRUSTSTORE}" \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Truststore Password']" \
+      --value "${LDAP_TLS_TRUSTSTORE_PASSWORD}" \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='TLS - Truststore Type']" \
+      --value 'PKCS12' \
+      "${authorizers_file}"
+    {{- end }}
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Url']" \
+      --value '{{ .Values.global.ldap.url }}' \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='User Search Base']" \
+      --value '{{ .Values.global.ldap.userSearchBase }}' \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='User Search Filter']" \
+      --value '{{ .Values.global.ldap.userSearchFilter }}' \
+      "${authorizers_file}"
+    
+    {{- if eq .Values.global.ldap.identityStrategy "USE_DN" }}
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Identity Strategy']" \
+      --value 'USE_DN' \
+      "${authorizers_file}"
+    {{- else }}
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Identity Strategy']" \
+      --value 'USE_USERNAME' \
+      "${authorizers_file}"
+    {{- end }}
+    
+    {{- if .Values.global.ldap.groupSearchBase }}
+    # Configure LDAP group synchronization
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Search Base']" \
+      --value '{{ .Values.global.ldap.groupSearchBase }}' \
+      "${authorizers_file}"
+    
+    {{- if .Values.global.ldap.groupSearchFilter }}
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Search Filter']" \
+      --value '{{ .Values.global.ldap.groupSearchFilter }}' \
+      "${authorizers_file}"
+    {{- end }}
+    
+    {{- if .Values.global.ldap.groupMembershipAttribute }}
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Membership - Enforce Case Sensitivity']" \
+      --value 'false' \
+      "${authorizers_file}"
+    {{- end }}
+    
+    {{- if .Values.global.ldap.groupNameAttribute }}
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[id='ldap-user-group-provider']/property[@name='Group Name Attribute']" \
+      --value '{{ .Values.global.ldap.groupNameAttribute }}' \
+      "${authorizers_file}"
+    {{- end }}
+    {{- end }}
+    
+    # Configure the managed-authorizer to use ldap-user-group-provider
+    xmlstarlet ed --inplace \
+      --update "//authorizer[id='managed-authorizer']/property[@name='User Group Provider']" \
+      --value 'ldap-user-group-provider' \
+      "${authorizers_file}"
+    
+    echo "LDAP configuration in authorizers.xml completed."
+    {{- end }}
+
     {{- /* Set file and directory paths to persistent locations */}}
     {{- with .Values.persistence }}
     conf_dir='./persistent_conf'
