@@ -34,34 +34,25 @@ spec:
             sleep 10
           done
           
-          echo "NiFi is ready. Waiting for LDAP user {{ .Values.global.ldap.initialAdminIdentity }} to authenticate..."
-          echo "Please login to NiFi UI with user {{ .Values.global.ldap.initialAdminIdentity }} now."
-          echo "This job will wait up to 10 minutes for first authentication..."
+          echo "NiFi is ready. Setting up LDAP admin {{ .Values.global.ldap.initialAdminIdentity }}..."
           
-          # Wait for the LDAP user to appear in users.xml (created after first login)
-          TIMEOUT=600
-          ELAPSED=0
-          USER_FOUND=false
-          
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            # Check if user exists in pod nifi-0
-            if kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
-              grep -q "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
-              /opt/nifi/nifi-current/persistent_conf/users.xml 2>/dev/null; then
+          # Check if user exists
+          if kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+            grep -q "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
+            /opt/nifi/nifi-current/persistent_conf/users.xml 2>/dev/null; then
+            
+            echo "User {{ .Values.global.ldap.initialAdminIdentity }} found in users.xml"
+            
+            # Get the user UUID
+            USER_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+              grep "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
+              /opt/nifi/nifi-current/persistent_conf/users.xml | \
+              sed -n 's/.*identifier="\([^"]*\)".*/\1/p' | head -1)
+            
+            echo "User UUID: $USER_ID"
               
-              USER_FOUND=true
-              echo "User {{ .Values.global.ldap.initialAdminIdentity }} found in users.xml"
-              
-              # Get the user UUID
-              USER_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
-                grep "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
-                /opt/nifi/nifi-current/persistent_conf/users.xml | \
-                sed -n 's/.*identifier="\([^"]*\)".*/\1/p' | head -1)
-              
-              echo "User UUID: $USER_ID"
-              
-              if [ -n "$USER_ID" ]; then
-                echo "Adding admin policies for user $USER_ID..."
+            if [ -n "$USER_ID" ]; then
+              echo "Adding admin policies for user $USER_ID..."
                 
                 # Create script to add policies
                 kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
@@ -118,28 +109,19 @@ spec:
                     tee /opt/nifi/nifi-current/persistent_conf/authorizations.xml > /dev/null
                   echo "Synced to \$pod"
                 done
-                
-                echo "=========================================="
-                echo "LDAP admin setup completed successfully!"
-                echo "User: {{ .Values.global.ldap.initialAdminIdentity }}"
-                echo "Please refresh your NiFi UI (F5)"
-                echo "=========================================="
-                break
-              fi
+              
+              echo "=========================================="
+              echo "LDAP admin setup completed successfully!"
+              echo "User: {{ .Values.global.ldap.initialAdminIdentity }}"
+              echo "Please refresh your NiFi UI (F5)"
+              echo "=========================================="
+            else
+              echo "ERROR: Could not find user UUID"
+              exit 1
             fi
-            
-            echo "Waiting for user authentication... ($ELAPSED/$TIMEOUT seconds)"
-            sleep 10
-            ELAPSED=$((ELAPSED + 10))
-          done
-          
-          if [ "$USER_FOUND" = "false" ]; then
-            echo "=========================================="
-            echo "WARNING: Timeout waiting for user authentication"
-            echo "Please login to NiFi with {{ .Values.global.ldap.initialAdminIdentity }}"
-            echo "Then manually run: kubectl delete job {{ include "nifi.fullname" . }}-ldap-admin-setup -n {{ .Release.Namespace }}"
-            echo "This will recreate the job and setup policies"
-            echo "=========================================="
+          else
+            echo "ERROR: User {{ .Values.global.ldap.initialAdminIdentity }} not found in users.xml"
+            echo "Please ensure the user is configured in authorizers.xml"
             exit 1
           fi
 {{- end }}
