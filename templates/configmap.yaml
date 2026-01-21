@@ -102,12 +102,6 @@ data:
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
 
-    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-    # Add LDAP admin user as Initial User Identity in file provider so it exists at startup
-    echo "Adding LDAP admin to Initial User Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
-    sed -i -E "s|(<property name=\"Initial User Identity 1\">.*</property>)|\1\n<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
-    {{- end }}
-
     {{- /* Configure authorizers.xml for LDAP authentication */}}
     {{- if .Values.global.ldap.enabled }}
     echo "Configuring authorizers.xml for LDAP authentication..."
@@ -233,17 +227,21 @@ data:
     {{- end }}
     {{- end }}
     
-    # Enable CompositeConfigurableUserGroupProvider to combine file and LDAP providers
+    # Enable CompositeConfigurableUserGroupProvider to combine LDAP (configurable) and file (nodes)
     echo "Enabling CompositeConfigurableUserGroupProvider for LDAP + file providers..."
     sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
     sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
     
-    # Configure composite provider to add LDAP as User Group Provider 1
-    # Note: "Configurable User Group Provider" already points to file-user-group-provider
-    # We only need to set User Group Provider 1 to ldap-user-group-provider
+    # Make LDAP the configurable provider (can add users/groups)
+    # Make file provider readonly (only for node identities)
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='Configurable User Group Provider']" \
+      --value 'ldap-user-group-provider' \
+      "${authorizers_file}"
+    
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
-      --value 'ldap-user-group-provider' \
+      --value 'file-user-group-provider' \
       "${authorizers_file}"
     
     # Configure the managed-authorizer to use composite-configurable-user-group-provider
