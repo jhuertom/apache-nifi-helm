@@ -21,7 +21,7 @@ spec:
       serviceAccountName: {{ include "nifi.serviceAccountName" . }}
       containers:
       - name: setup-ldap-admin
-        image: curlimages/curl:8.5.0
+        image: bitnami/kubectl:1.28
         command:
         - sh
         - -c
