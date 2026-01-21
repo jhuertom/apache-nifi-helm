@@ -233,9 +233,25 @@ data:
     {{- end }}
     {{- end }}
     
-    # Configure the managed-authorizer to use ldap-user-group-provider
-    echo "Configuring managed-authorizer to use ldap-user-group-provider..."
-    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">ldap-user-group-provider</property>|g" "${authorizers_file}"
+    # Enable CompositeConfigurableUserGroupProvider to combine file and LDAP providers
+    echo "Enabling CompositeConfigurableUserGroupProvider for LDAP + file providers..."
+    sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
+    sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
+    
+    # Configure composite provider to use both file and LDAP
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
+      --value 'file-user-group-provider' \
+      "${authorizers_file}"
+    
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 2']" \
+      --value 'ldap-user-group-provider' \
+      "${authorizers_file}"
+    
+    # Configure the managed-authorizer to use composite-configurable-user-group-provider
+    echo "Configuring managed-authorizer to use composite-configurable-user-group-provider..."
+    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
     
     # NOTE: When using LDAP, we don't set Initial Admin Identity because:
     # 1. The user is already added as "Initial User Identity Admin"
