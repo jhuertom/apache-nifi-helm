@@ -1,0 +1,145 @@
+{{- if .Values.global.ldap.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nifi.fullname" . }}-ldap-admin-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nifi.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: {{ include "nifi.name" . }}-ldap-setup
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "nifi.serviceAccountName" . }}
+      containers:
+      - name: setup-ldap-admin
+        image: curlimages/curl:8.5.0
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          
+          echo "Waiting for NiFi to be ready..."
+          until curl -k -s https://{{ include "nifi.fullname" . }}-0.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:8443/nifi-api/flow/status > /dev/null 2>&1; do
+            echo "NiFi not ready yet, waiting..."
+            sleep 10
+          done
+          
+          echo "NiFi is ready. Waiting for LDAP user {{ .Values.global.ldap.initialAdminIdentity }} to authenticate..."
+          echo "Please login to NiFi UI with user {{ .Values.global.ldap.initialAdminIdentity }} now."
+          echo "This job will wait up to 10 minutes for first authentication..."
+          
+          # Wait for the LDAP user to appear in users.xml (created after first login)
+          TIMEOUT=600
+          ELAPSED=0
+          USER_FOUND=false
+          
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            # Check if user exists in pod nifi-0
+            if kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+              grep -q "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
+              /opt/nifi/nifi-current/persistent_conf/users.xml 2>/dev/null; then
+              
+              USER_FOUND=true
+              echo "User {{ .Values.global.ldap.initialAdminIdentity }} found in users.xml"
+              
+              # Get the user UUID
+              USER_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+                grep "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
+                /opt/nifi/nifi-current/persistent_conf/users.xml | \
+                sed -n 's/.*identifier="\([^"]*\)".*/\1/p' | head -1)
+              
+              echo "User UUID: $USER_ID"
+              
+              if [ -n "$USER_ID" ]; then
+                echo "Adding admin policies for user $USER_ID..."
+                
+                # Create script to add policies
+                kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
+                  USER_ID='$USER_ID'
+                  AUTH_FILE='/opt/nifi/nifi-current/persistent_conf/authorizations.xml'
+                  
+                  # Backup original file
+                  cp \"\$AUTH_FILE\" \"\${AUTH_FILE}.backup\"
+                  
+                  # Function to add user to policy
+                  add_user_to_policy() {
+                    RESOURCE=\$1
+                    ACTION=\$2
+                    
+                    # Check if policy exists
+                    if grep -q \"resource=\\\"\$RESOURCE\\\".*action=\\\"\$ACTION\\\"\" \"\$AUTH_FILE\"; then
+                      # Add user to existing policy if not already there
+                      if ! grep -A 10 \"resource=\\\"\$RESOURCE\\\".*action=\\\"\$ACTION\\\"\" \"\$AUTH_FILE\" | grep -q \"identifier=\\\"\$USER_ID\\\"\"; then
+                        sed -i \"/resource=\\\"\$RESOURCE\\\".*action=\\\"\$ACTION\\\"/,/<\/policy>/ s|</policy>|      <user identifier=\\\"\$USER_ID\\\"/>\\\n    </policy>|\" \"\$AUTH_FILE\"
+                        echo \"Added user to \$RESOURCE \$ACTION policy\"
+                      fi
+                    else
+                      # Create new policy
+                      POLICY_ID=\$(cat /proc/sys/kernel/random/uuid)
+                      sed -i \"/<\/policies>/i\    <policy action=\\\"\$ACTION\\\" identifier=\\\"\$POLICY_ID\\\" resource=\\\"\$RESOURCE\\\">\\\n      <user identifier=\\\"\$USER_ID\\\"/>\\\n    </policy>\" \"\$AUTH_FILE\"
+                      echo \"Created new \$RESOURCE \$ACTION policy\"
+                    fi
+                  }
+                  
+                  # Add all admin policies
+                  add_user_to_policy '/flow' 'R'
+                  add_user_to_policy '/flow' 'W'
+                  add_user_to_policy '/controller' 'R'
+                  add_user_to_policy '/controller' 'W'
+                  add_user_to_policy '/policies' 'R'
+                  add_user_to_policy '/policies' 'W'
+                  add_user_to_policy '/tenants' 'R'
+                  add_user_to_policy '/tenants' 'W'
+                  add_user_to_policy '/restricted-components' 'W'
+                  add_user_to_policy '/provenance' 'R'
+                  add_user_to_policy '/data/process-groups/root' 'R'
+                  add_user_to_policy '/data/process-groups/root' 'W'
+                  add_user_to_policy '/system' 'R'
+                  
+                  echo 'Admin policies added successfully'
+                "
+                
+                # Copy policies to other nodes
+                echo "Syncing policies to other nodes..."
+                for pod in {{ include "nifi.fullname" . }}-1 {{ include "nifi.fullname" . }}-2; do
+                  kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+                    cat /opt/nifi/nifi-current/persistent_conf/authorizations.xml | \
+                    kubectl exec -i \$pod -n {{ .Release.Namespace }} -- \
+                    tee /opt/nifi/nifi-current/persistent_conf/authorizations.xml > /dev/null
+                  echo "Synced to \$pod"
+                done
+                
+                echo "=========================================="
+                echo "LDAP admin setup completed successfully!"
+                echo "User: {{ .Values.global.ldap.initialAdminIdentity }}"
+                echo "Please refresh your NiFi UI (F5)"
+                echo "=========================================="
+                break
+              fi
+            fi
+            
+            echo "Waiting for user authentication... ($ELAPSED/$TIMEOUT seconds)"
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          if [ "$USER_FOUND" = "false" ]; then
+            echo "=========================================="
+            echo "WARNING: Timeout waiting for user authentication"
+            echo "Please login to NiFi with {{ .Values.global.ldap.initialAdminIdentity }}"
+            echo "Then manually run: kubectl delete job {{ include "nifi.fullname" . }}-ldap-admin-setup -n {{ .Release.Namespace }}"
+            echo "This will recreate the job and setup policies"
+            echo "=========================================="
+            exit 1
+          fi
+{{- end }}
