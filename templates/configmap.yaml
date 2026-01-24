@@ -645,6 +645,8 @@ data:
     {{ printf "output.%s:" .output.type }}
     {{- toYaml .output.parameters | nindent 6 }}
     {{- end }}
+    {{- if .queue }}
     queue.mem:
       flush.timeout: {{ .queue.flushTimeout }}
+    {{- end }}
 
