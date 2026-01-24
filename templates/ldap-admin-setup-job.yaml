@@ -105,9 +105,9 @@ spec:
                 for pod in {{ include "nifi.fullname" . }}-1 {{ include "nifi.fullname" . }}-2; do
                   kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
                     cat /opt/nifi/nifi-current/persistent_conf/authorizations.xml | \
-                    kubectl exec -i \$pod -n {{ .Release.Namespace }} -- \
+                    kubectl exec -i $pod -n {{ .Release.Namespace }} -- \
                     tee /opt/nifi/nifi-current/persistent_conf/authorizations.xml > /dev/null
-                  echo "Synced to \$pod"
+                  echo "Synced to $pod"
                 done
               
               echo "=========================================="
