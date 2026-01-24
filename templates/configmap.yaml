@@ -544,15 +544,16 @@ data:
     fi
 
     # Extract the node ID based on the hostname
+
     NODE_ID=$(echo "$NODE_INFO" | grep "$HOSTNAME" | awk '{print $2}')
 
     # Check if the NODE_ID is empty
     if [ -z "$NODE_ID" ]; then
-      echo "$(date): Node ID for $HOSTNAME not found. Exiting."
-      exit 1
+      echo "$(date): WARNING: Node ID for $HOSTNAME not found. Skipping node operations."
+      NODE_ID=""
+    else
+      echo "$(date): Node ID for $HOSTNAME is $NODE_ID"
     fi
-
-    echo "$(date): Node ID for $HOSTNAME is $NODE_ID"
 
     # Get the current node status
     CURRENT_STATUS=$(get_node_status "$NODE_ID")
