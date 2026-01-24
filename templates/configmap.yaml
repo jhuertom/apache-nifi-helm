@@ -137,6 +137,104 @@ data:
     prop_replace 'nifi.security.user.authorizer' 'managed-authorizer'
     prop_replace 'nifi.security.user.login.identity.provider' 'ldap-provider'
     
+    # CRITICAL: Create a clean authorizers.xml with ONLY LDAP (no single-user-authorizer)
+    # This prevents NiFi from loading the single-user-authorizer at all
+    echo "Creating clean authorizers.xml for LDAP-only authentication..."
+    
+    AUTHORIZERS_FILE='conf/authorizers.xml'
+    cat > "$AUTHORIZERS_FILE" << 'AUTHEOF'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<authorizers>
+    <userGroupProvider>
+        <identifier>file-user-group-provider</identifier>
+        <class>org.apache.nifi.authorization.FileUserGroupProvider</class>
+        <property name="Users File">./persistent_conf/users.xml</property>
+        <property name="Initial User Identity 1"></property>
+    </userGroupProvider>
+
+    <userGroupProvider>
+        <identifier>ldap-user-group-provider</identifier>
+        <class>org.apache.nifi.ldap.tenants.LdapUserGroupProvider</class>
+        <property name="Authentication Strategy">__LDAP_AUTH_STRATEGY__</property>
+        <property name="Manager DN">__LDAP_MANAGER_DN__</property>
+        <property name="Manager Password">__LDAP_MANAGER_PASSWORD__</property>
+        <property name="TLS - Keystore"></property>
+        <property name="TLS - Keystore Password"></property>
+        <property name="TLS - Keystore Type"></property>
+        <property name="TLS - Truststore"></property>
+        <property name="TLS - Truststore Password"></property>
+        <property name="TLS - Truststore Type"></property>
+        <property name="TLS - Client Auth"></property>
+        <property name="TLS - Protocol">TLSv1.2</property>
+        <property name="TLS - Shutdown Gracefully"></property>
+        <property name="Referral Strategy">FOLLOW</property>
+        <property name="Connect Timeout">10 secs</property>
+        <property name="Read Timeout">10 secs</property>
+        <property name="Url">__LDAP_URL__</property>
+        <property name="Page Size"></property>
+        <property name="Sync Interval">30 mins</property>
+        <property name="Group Membership - Enforce Case Sensitivity">false</property>
+        <property name="User Search Base">__LDAP_USER_SEARCH_BASE__</property>
+        <property name="User Object Class">person</property>
+        <property name="User Search Scope">ONE_LEVEL</property>
+        <property name="User Search Filter">__LDAP_USER_SEARCH_FILTER__</property>
+        <property name="User Identity Attribute">uid</property>
+        <property name="User Group Name Attribute"></property>
+        <property name="User Group Name Attribute - Referenced Group Attribute"></property>
+        <property name="Group Search Base"></property>
+        <property name="Group Object Class">group</property>
+        <property name="Group Search Scope">ONE_LEVEL</property>
+        <property name="Group Search Filter"></property>
+        <property name="Group Name Attribute"></property>
+        <property name="Group Member Attribute"></property>
+        <property name="Group Member Attribute - Referenced User Attribute"></property>
+    </userGroupProvider>
+
+    <userGroupProvider>
+        <identifier>composite-configurable-user-group-provider</identifier>
+        <class>org.apache.nifi.authorization.CompositeConfigurableUserGroupProvider</class>
+        <property name="Configurable User Group Provider">file-user-group-provider</property>
+        <property name="User Group Provider 1">ldap-user-group-provider</property>
+    </userGroupProvider>
+
+    <accessPolicyProvider>
+        <identifier>file-access-policy-provider</identifier>
+        <class>org.apache.nifi.authorization.FileAccessPolicyProvider</class>
+        <property name="User Group Provider">composite-configurable-user-group-provider</property>
+        <property name="Authorizations File">./persistent_conf/authorizations.xml</property>
+        <property name="Initial Admin Identity">__INITIAL_ADMIN_IDENTITY__</property>
+        <property name="Node Identity 1">__NODE_IDENTITY_1__</property>
+        <property name="Node Identity 2">__NODE_IDENTITY_2__</property>
+        <property name="Node Identity 3">__NODE_IDENTITY_3__</property>
+    </accessPolicyProvider>
+
+    <authorizer>
+        <identifier>managed-authorizer</identifier>
+        <class>org.apache.nifi.authorization.StandardManagedAuthorizer</class>
+        <property name="Access Policy Provider">file-access-policy-provider</property>
+    </authorizer>
+</authorizers>
+AUTHEOF
+
+    # Replace placeholders with actual values
+    sed -i "s|__LDAP_AUTH_STRATEGY__|{{ .Values.global.ldap.authenticationStrategy }}|g" "$AUTHORIZERS_FILE"
+    sed -i "s|__LDAP_MANAGER_DN__|{{ .Values.global.ldap.manager.distinguishedName }}|g" "$AUTHORIZERS_FILE"
+    sed -i "s|__LDAP_MANAGER_PASSWORD__|${LDAP_MANAGER_PASSWORD}|g" "$AUTHORIZERS_FILE"
+    sed -i "s|__LDAP_URL__|{{ .Values.global.ldap.url }}|g" "$AUTHORIZERS_FILE"
+    sed -i "s|__LDAP_USER_SEARCH_BASE__|{{ .Values.global.ldap.userSearchBase }}|g" "$AUTHORIZERS_FILE"
+    sed -i "s|__LDAP_USER_SEARCH_FILTER__|{{ .Values.global.ldap.userSearchFilter }}|g" "$AUTHORIZERS_FILE"
+    sed -i "s|__INITIAL_ADMIN_IDENTITY__|{{ .Values.global.ldap.initialAdminIdentity }}|g" "$AUTHORIZERS_FILE"
+    
+    # Set Node Identities
+    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+    NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+    sed -i "s|__NODE_IDENTITY_{{ add $i 1 }}__|${NODE{{ $i }}_DN}|g" "$AUTHORIZERS_FILE"
+    {{- end }}
+    
+    # Remove unused Node Identity placeholders (if nodeCount < 3)
+    sed -i '/__NODE_IDENTITY_/d' "$AUTHORIZERS_FILE"
+    
+    echo "authorizers.xml created with LDAP-only configuration (no single-user-authorizer)."
     echo "LDAP authentication configured."
     
     {{- else }}
@@ -169,8 +267,10 @@ data:
     # For LDAP, we create complete users.xml and authorizations.xml
     # with all necessary users (admin, nodes, ingress) and policies
     {{- if .Values.global.ldap.enabled }}
-    if [ ! -f "$USERS_XML" ] || [ ! -f "$AUTH_XML" ]; then
-        echo "LDAP mode: Creating users.xml and authorizations.xml with all identities..."
+    
+    # First, create users.xml if it doesn't exist (always needed)
+    if [ ! -f "$USERS_XML" ]; then
+        echo "LDAP mode: Creating users.xml with all identities..."
         mkdir -p "$PERSISTENT_CONF_DIR"
         
         # Define all identities with deterministic UUIDs
@@ -201,9 +301,25 @@ data:
         echo '</tenants>' >> "$USERS_XML"
         
         echo "Created users.xml with admin, ingress and node identities"
+    fi
+    
+    # ========== CREATE AUTHORIZATIONS.XML ==========
+    # This must include policies for the root process group
+    if [ ! -f "$AUTH_XML" ]; then
+        echo "LDAP mode: Creating authorizations.xml..."
+        mkdir -p "$PERSISTENT_CONF_DIR"
         
-        # ========== CREATE AUTHORIZATIONS.XML ==========
-        # Get ROOT_ID if flow exists, otherwise leave empty (NiFi will update later)
+        # Re-define identities (in case users.xml already existed)
+        ADMIN_IDENTITY="{{ .Values.global.ldap.initialAdminIdentity }}"
+        ADMIN_ID=$(GET_UUID "user-$ADMIN_IDENTITY")
+        INGRESS_DN="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        INGRESS_ID=$(GET_UUID "user-$INGRESS_DN")
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+        NODE{{ $i }}_ID=$(GET_UUID "user-$NODE{{ $i }}_DN")
+        {{- end }}
+        
+        # Get ROOT_ID if flow exists, otherwise leave empty (will be added later by PolicyMonitor)
         ROOT_ID=""
         if [ -s "$FLOW_FILE" ]; then
             ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
@@ -570,7 +686,20 @@ data:
                     sed -i '/<\/policies>/e cat /tmp/monitor_policies.xml' "$AUTH_XML"
                     rm -f /tmp/monitor_policies.xml
                     echo "[PolicyMonitor] Policies added for ROOT_ID: $ROOT_ID"
-                    echo "[PolicyMonitor] NOTE: You may need to restart NiFi pods for policies to take effect."
+                    
+                    # Signal NiFi to reload authorizations by touching the file
+                    # NiFi's FileAuthorizer watches for file changes
+                    touch "$AUTH_XML"
+                    
+                    # Also try to trigger a reload via the NiFi process
+                    # Find NiFi's main Java process and send SIGHUP
+                    NIFI_PID=$(pgrep -f "org.apache.nifi.NiFi" | head -1)
+                    if [ -n "$NIFI_PID" ]; then
+                        echo "[PolicyMonitor] Sending SIGHUP to NiFi (PID: $NIFI_PID) to reload authorizations..."
+                        kill -HUP $NIFI_PID 2>/dev/null || true
+                    fi
+                    
+                    echo "[PolicyMonitor] Policies applied. If issues persist, restart pods with: kubectl delete pod -n nifi -l app=nifi"
                 else
                     echo "[PolicyMonitor] Policies for ROOT_ID $ROOT_ID already exist."
                 fi
@@ -716,196 +845,14 @@ data:
     [ -f "$AUTH_XML" ] && cat "$AUTH_XML" || echo "authorizations.xml NOT FOUND"
     echo "DEBUG: Finished registry print."
 
-    # Update authorizers.xml paths to point to persistent files
+    {{- if not .Values.global.ldap.enabled }}
+    # Update authorizers.xml paths to point to persistent files (only for non-LDAP mode)
     conf_dir='/opt/nifi/nifi-current/persistent_conf'
     sed -i -E "s|(<property name=\"Authorizations File\">).*(</property>)|\1${conf_dir}/authorizations.xml\2|g" "${authorizers_file}"
     sed -i -E "s|(<property name=\"Users File\">).*(</property>)|\1${conf_dir}/users.xml\2|g" "${authorizers_file}"
-
-    {{- /* Configure authorizers.xml for LDAP authentication */}}
-    {{- if .Values.global.ldap.enabled }}
-    echo "Configuring authorizers.xml for LDAP authentication..."
-    
-    # Enable (uncomment) the ldap-user-group-provider - remove both comment lines
-    sed -i '/<!-- To enable the ldap-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
-    sed -i '/To enable the ldap-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
-    
-    echo "LDAP provider uncommented. Configuring properties..."
-    
-    # Configure the ldap-user-group-provider - CRITICAL: Must set Url first
-    echo "Setting LDAP URL: {{ .Values.global.ldap.url }}"
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Url']" \
-      --value '{{ .Values.global.ldap.url }}' \
-      "${authorizers_file}" || echo "ERROR: Failed to set LDAP URL"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Authentication Strategy']" \
-      --value '{{ .Values.global.ldap.authenticationStrategy }}' \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Manager DN']" \
-      --value '{{ .Values.global.ldap.manager.distinguishedName }}' \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Manager Password']" \
-      --value "${LDAP_MANAGER_PASSWORD}" \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Protocol']" \
-      --value '{{ .Values.global.ldap.tlsProtocol }}' \
-      "${authorizers_file}"
-    
-    {{- if or (eq .Values.global.ldap.authenticationStrategy "LDAPS") (eq .Values.global.ldap.authenticationStrategy "START_TLS") }}
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Keystore']" \
-      --value "${LDAP_TLS_KEYSTORE}" \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Keystore Password']" \
-      --value "${LDAP_TLS_KEYSTORE_PASSWORD}" \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Keystore Type']" \
-      --value 'PKCS12' \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Truststore']" \
-      --value "${LDAP_TLS_TRUSTSTORE}" \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Truststore Password']" \
-      --value "${LDAP_TLS_TRUSTSTORE_PASSWORD}" \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='TLS - Truststore Type']" \
-      --value 'PKCS12' \
-      "${authorizers_file}"
-    {{- end }}
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Url']" \
-      --value '{{ .Values.global.ldap.url }}' \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='User Search Base']" \
-      --value '{{ .Values.global.ldap.userSearchBase }}' \
-      "${authorizers_file}"
-    
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='User Search Filter']" \
-      --value '{{ .Values.global.ldap.userSearchFilter }}' \
-      "${authorizers_file}"
-    
-    {{- if eq .Values.global.ldap.identityStrategy "USE_DN" }}
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Identity Strategy']" \
-      --value 'USE_DN' \
-      "${authorizers_file}"
     {{- else }}
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Identity Strategy']" \
-      --value 'USE_USERNAME' \
-      "${authorizers_file}"
-    {{- end }}
-    
-    {{- if .Values.global.ldap.groupSearchBase }}
-    # Configure LDAP group synchronization
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Search Base']" \
-      --value '{{ .Values.global.ldap.groupSearchBase }}' \
-      "${authorizers_file}"
-    
-    {{- if .Values.global.ldap.groupSearchFilter }}
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Search Filter']" \
-      --value '{{ .Values.global.ldap.groupSearchFilter }}' \
-      "${authorizers_file}"
-    {{- end }}
-    
-    {{- if .Values.global.ldap.groupMembershipAttribute }}
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Membership - Enforce Case Sensitivity']" \
-      --value 'false' \
-      "${authorizers_file}"
-    {{- end }}
-    
-    {{- if .Values.global.ldap.groupNameAttribute }}
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='Group Name Attribute']" \
-      --value '{{ .Values.global.ldap.groupNameAttribute }}' \
-      "${authorizers_file}"
-    {{- end }}
-    {{- end }}
-    
-    # Configure User Identity Attribute to align with authentication (usually uid or sAMAccountName)
-    # This prevents identity conflicts where authentication sees "user" but authorization sees "DN"
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='User Identity Attribute']" \
-      --value 'uid' \
-      "${authorizers_file}"
-
-    # Enable composite provider
-    echo "Enabling composite-configurable-user-group-provider..."
-    sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
-    sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
-    
-    # CRITICAL FIX: composite-configurable-user-group-provider already has file-user-group-provider
-    # as its internal configurable provider. We only need to add ldap-user-group-provider
-    # as the non-configurable provider in position 1.
-    # DO NOT add file-user-group-provider here - it causes "Duplicate provider" error
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
-      --value 'ldap-user-group-provider' \
-      "${authorizers_file}"
-    
-    # Use composite provider in managed-authorizer
-    echo "Configuring managed-authorizer to use composite provider..."
-    xmlstarlet ed --inplace \
-      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='User Group Provider']" \
-      --value 'composite-configurable-user-group-provider' \
-      "${authorizers_file}"
-
-    # Native Bootstrap Alignment - Set Initial Admin Identity in authorizers.xml
-    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-    echo "Aligning native authorizers.xml with LDAP Admin: {{ .Values.global.ldap.initialAdminIdentity }}"
-    xmlstarlet ed --inplace \
-      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
-      "${authorizers_file}"
-    {{- end }}
-
-    # Set Node Identities in authorizers.xml for native cluster sync
-    for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-        NODE_DN="CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-        INDEX=$((i + 1))
-        echo "Registering Node Identity $INDEX: $NODE_DN"
-        # Since the property Node Identity [unique key] is dynamic, we add it if it doesn't exist
-        if ! grep -q "Node Identity $INDEX" "${authorizers_file}"; then
-            xmlstarlet ed --inplace \
-              --subnode "//accessPolicyProvider[identifier='file-access-policy-provider']" \
-              --type elem -n "property" -v "$NODE_DN" \
-              "${authorizers_file}"
-            xmlstarlet ed --inplace \
-              --insert "//accessPolicyProvider[identifier='file-access-policy-provider']/property[last()]" \
-              --type attr -n "name" -v "Node Identity $INDEX" \
-              "${authorizers_file}"
-        else
-             xmlstarlet ed --inplace \
-              --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Node Identity $INDEX']" \
-              --value "$NODE_DN" \
-              "${authorizers_file}"
-        fi
-    done
-
+    # authorizers.xml was already created from scratch earlier in LDAP mode
+    # No need to modify the default NiFi authorizers.xml file
     echo "LDAP configuration completed with deterministic provisioning."
     {{- end }}
 
@@ -915,8 +862,11 @@ data:
     prop_replace 'nifi.flow.configuration.file' "${conf_dir}/{{ .config.files.flowJson }}"
     prop_replace 'nifi.flow.configuration.archive.dir' "${conf_dir}/archive"
 
+    # Only update paths if not in LDAP mode (LDAP mode already created authorizers.xml with correct paths)
+    {{- if not $.Values.global.ldap.enabled }}
     sed -i -E "s|(<property name=\"Authorizations File\">).*(</property>)|\1${conf_dir}/{{ .config.files.authorizations }}\2|g" "${authorizers_file}"
     sed -i -E "s|(<property name=\"Users File\">).*(</property>)|\1${conf_dir}/{{ .config.files.users }}\2|g" "${authorizers_file}"
+    {{- end }}
     {{- end }}
 
     {{- /* Define flowfile repository */}}
