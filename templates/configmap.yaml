@@ -151,8 +151,10 @@ data:
     printf '%s\n' '        <class>org.apache.nifi.authorization.FileUserGroupProvider</class>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '        <property name="Users File">./persistent_conf/users.xml</property>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '        <property name="Initial User Identity 1">{{ .Values.global.ldap.initialAdminIdentity }}</property>' >> "$AUTHORIZERS_FILE"
+    # Add ingress identity (CN=nifi.nifi) for proxy authentication
+    printf '%s\n' '        <property name="Initial User Identity 2">CN={{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
     {{- range $i := until (int .Values.global.nifi.nodeCount) }}
-    printf '%s\n' '        <property name="Initial User Identity {{ add $i 2 }}">CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Initial User Identity {{ add $i 3 }}">CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
     {{- end }}
     printf '%s\n' '    </userGroupProvider>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '' >> "$AUTHORIZERS_FILE"
@@ -207,8 +209,10 @@ data:
     printf '%s\n' '        <property name="User Group Provider">composite-configurable-user-group-provider</property>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '        <property name="Authorizations File">./persistent_conf/authorizations.xml</property>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '        <property name="Initial Admin Identity">{{ .Values.global.ldap.initialAdminIdentity }}</property>' >> "$AUTHORIZERS_FILE"
+    # Add ingress as Node Identity for proxy permissions
+    printf '%s\n' '        <property name="Node Identity 1">CN={{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
     {{- range $i := until (int .Values.global.nifi.nodeCount) }}
-    printf '%s\n' '        <property name="Node Identity {{ add $i 1 }}">CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Node Identity {{ add $i 2 }}">CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
     {{- end }}
     printf '%s\n' '    </accessPolicyProvider>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '' >> "$AUTHORIZERS_FILE"
