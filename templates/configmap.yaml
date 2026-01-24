@@ -641,8 +641,10 @@ data:
       {{- end }}
       {{- toYaml .processors | nindent 6 }}
     {{- end }}
+    {{- if .output }}
     {{ printf "output.%s:" .output.type }}
     {{- toYaml .output.parameters | nindent 6 }}
+    {{- end }}
     queue.mem:
       flush.timeout: {{ .queue.flushTimeout }}
 
