@@ -93,6 +93,19 @@ spec:
                   add_user_to_policy '/tenants' 'W'
                   add_user_to_policy '/restricted-components' 'W'
                   add_user_to_policy '/provenance' 'R'
+                  # Get Root Process Group UUID
+                  ROOT_GROUP_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+                    sh -c "zcat /opt/nifi/nifi-current/persistent_conf/flow.json.gz | jq -r .rootGroup.identifier")
+                  
+                  echo "Root Group ID: $ROOT_GROUP_ID"
+                  
+                  if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
+                    add_user_to_policy "/process-groups/$ROOT_GROUP_ID" 'R'
+                    add_user_to_policy "/process-groups/$ROOT_GROUP_ID" 'W'
+                    add_user_to_policy "/data/process-groups/$ROOT_GROUP_ID" 'R'
+                    add_user_to_policy "/data/process-groups/$ROOT_GROUP_ID" 'W'
+                  fi
+
                   add_user_to_policy '/process-groups/root' 'R'
                   add_user_to_policy '/process-groups/root' 'W'
                   add_user_to_policy '/system' 'R'
