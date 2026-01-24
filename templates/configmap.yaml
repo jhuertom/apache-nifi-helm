@@ -181,13 +181,32 @@ data:
     }
 
     # INITIAL REGISTRY PROVISIONING
-    # For LDAP, we let NiFi create users.xml and authorizations.xml automatically
-    # using the Initial Admin Identity. This ensures proper policies for root process group.
+    # For LDAP, we need to create users.xml with the Initial Admin Identity
+    # so FileAccessPolicyProvider can find it and create initial policies
     {{- if .Values.global.ldap.enabled }}
-    if [ ! -f "$USERS_XML" ] && [ ! -f "$AUTH_XML" ]; then
-        echo "LDAP mode: Letting NiFi create initial security registry with Initial Admin Identity..."
+    if [ ! -f "$USERS_XML" ]; then
+        echo "LDAP mode: Creating users.xml with Initial Admin Identity for policy seeding..."
         mkdir -p "$PERSISTENT_CONF_DIR"
-        # NiFi will create these files automatically on first startup
+        
+        ADMIN_IDENTITY="{{ .Values.global.ldap.initialAdminIdentity }}"
+        ADMIN_ID=$(GET_UUID "user-$ADMIN_IDENTITY")
+        
+        # Also add node identities for cluster communication
+        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
+        echo '<tenants>' >> "$USERS_XML"
+        echo '  <groups/>' >> "$USERS_XML"
+        echo '  <users>' >> "$USERS_XML"
+        echo "    <user identifier=\"$ADMIN_ID\" identity=\"$ADMIN_IDENTITY\"/>" >> "$USERS_XML"
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        NODE_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+        NODE_ID=$(GET_UUID "user-$NODE_DN")
+        echo "    <user identifier=\"$NODE_ID\" identity=\"$NODE_DN\"/>" >> "$USERS_XML"
+        {{- end }}
+        echo '  </users>' >> "$USERS_XML"
+        echo '</tenants>' >> "$USERS_XML"
+        
+        echo "Created users.xml with admin: $ADMIN_IDENTITY"
+        cat "$USERS_XML"
     fi
     {{- else }}
     # Non-LDAP mode: Create users.xml and authorizations.xml manually
