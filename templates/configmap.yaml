@@ -94,9 +94,9 @@ data:
     AUTH_XML="${PERSISTENT_CONF_DIR}/authorizations.xml"
     FLOW_FILE="${PERSISTENT_CONF_DIR}/flow.json.gz"
 
-    # Deterministic UUID Generator (MD5 based)
+    # Deterministic UUID Generator (NiFi-aligned Version 3 UUID)
     GET_UUID() {
-      echo -n "$1" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
+      python3 -c "import uuid, hashlib; md5 = hashlib.md5('$1'.encode('utf-8')).digest(); uid = list(md5); uid[6] = (uid[6] & 0x0f) | 0x30; uid[8] = (uid[8] & 0x3f) | 0x80; print(str(uuid.UUID(bytes=bytes(uid))))"
     }
 
     # INITIAL REGISTRY PROVISIONING
@@ -121,14 +121,26 @@ data:
         echo "Identities to authorize:$ADMIN_IDENTITIES"
 
         # 1. Generate users.xml
+        # We'll create a group called 'NiFi Administrators' and add everyone to it.
+        GROUP_NAME="NiFi Administrators"
+        GROUP_ID=$(GET_UUID "group-$GROUP_NAME")
+
         echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
         echo '<tenants>' >> "$USERS_XML"
         echo '  <users>' >> "$USERS_XML"
         for DN in $ADMIN_IDENTITIES; do
-            UUID=$(GET_UUID "user-$DN")
-            echo "    <user identifier=\"$UUID\" identity=\"$DN\"/>" >> "$USERS_XML"
+            U_ID=$(GET_UUID "user-$DN")
+            echo "    <user identifier=\"$U_ID\" identity=\"$DN\"/>" >> "$USERS_XML"
         done
         echo '  </users>' >> "$USERS_XML"
+        echo '  <groups>' >> "$USERS_XML"
+        echo "    <group identifier=\"$GROUP_ID\" name=\"$GROUP_NAME\">" >> "$USERS_XML"
+        for DN in $ADMIN_IDENTITIES; do
+            U_ID=$(GET_UUID "user-$DN")
+            echo "      <user identifier=\"$U_ID\"/>" >> "$USERS_XML"
+        done
+        echo '    </group>' >> "$USERS_XML"
+        echo '  </groups>' >> "$USERS_XML"
         echo '</tenants>' >> "$USERS_XML"
 
         # 2. Generate authorizations.xml
@@ -147,13 +159,9 @@ data:
 
         for RES in $RESOURCES; do
             for ACT in R W; do
-                # Restricted components only needs W usually, but we grant R too for safety
-                PID=$(GET_UUID "policy-$RES-$ACT")
-                echo "    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">" >> "$AUTH_XML"
-                for DN in $ADMIN_IDENTITIES; do
-                    U_ID=$(GET_UUID "user-$DN")
-                    echo "      <user identifier=\"$U_ID\"/>" >> "$AUTH_XML"
-                done
+                P_ID=$(GET_UUID "policy-$RES-$ACT")
+                echo "    <policy action=\"$ACT\" identifier=\"$P_ID\" resource=\"$RES\">" >> "$AUTH_XML"
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> "$AUTH_XML"
                 echo "    </policy>" >> "$AUTH_XML"
             done
         done
@@ -324,15 +332,37 @@ data:
     echo "Configuring managed-authorizer to use composite provider..."
     sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
 
-    # Clear any leftover Initial Admin settings to ensure our pre-provisioned files are used
+    # Native Bootstrap Alignment - Set Initial Admin Identity in authorizers.xml
+    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
+    echo "Aligning native authorizers.xml with LDAP Admin: {{ .Values.global.ldap.initialAdminIdentity }}"
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value '' \
+      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
-    xmlstarlet ed --inplace \
-      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Group']" \
-      --value '' \
-      "${authorizers_file}"
+    {{- end }}
+
+    # Set Node Identities in authorizers.xml for native cluster sync
+    for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
+        NODE_DN="CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        INDEX=$((i + 1))
+        echo "Registering Node Identity $INDEX: $NODE_DN"
+        # Since the property Node Identity [unique key] is dynamic, we add it if it doesn't exist
+        if ! grep -q "Node Identity $INDEX" "${authorizers_file}"; then
+            xmlstarlet ed --inplace \
+              --subnode "//accessPolicyProvider[identifier='file-access-policy-provider']" \
+              --type elem -n "property" -v "$NODE_DN" \
+              "${authorizers_file}"
+            xmlstarlet ed --inplace \
+              --insert "//accessPolicyProvider[identifier='file-access-policy-provider']/property[last()]" \
+              --type attr -n "name" -v "Node Identity $INDEX" \
+              "${authorizers_file}"
+        else
+             xmlstarlet ed --inplace \
+              --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Node Identity $INDEX']" \
+              --value "$NODE_DN" \
+              "${authorizers_file}"
+        fi
+    done
 
     echo "LDAP configuration completed with deterministic provisioning."
     {{- end }}
