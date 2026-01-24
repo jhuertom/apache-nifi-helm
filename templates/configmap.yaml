@@ -231,12 +231,20 @@ data:
         echo '  <policies>' >> "$AUTH_XML"
         
         RESOURCES="/flow /controller /proxy /restricted-components /tenants /policies"
-        # Access Root Group if exists
+        
+        # Access Root Group - Get ROOT_ID from existing flow or wait for it
+        ROOT_ID=""
         if [ -s "$FLOW_FILE" ]; then
             ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
-            if [ -n "$ROOT_ID" ] && [ "$ROOT_ID" != "null" ] && [ "$ROOT_ID" != "true" ]; then
-                RESOURCES="$RESOURCES /process-groups/$ROOT_ID /data/process-groups/$ROOT_ID /operation/process-groups/$ROOT_ID"
-            fi
+        fi
+        
+        # If no flow exists yet, we'll add root group policies after NiFi creates the flow
+        # For now, add a placeholder that will be updated on subsequent restarts
+        if [ -n "$ROOT_ID" ] && [ "$ROOT_ID" != "null" ] && [ "$ROOT_ID" != "true" ]; then
+            echo "Found existing ROOT_ID: $ROOT_ID"
+            RESOURCES="$RESOURCES /process-groups/$ROOT_ID /data/process-groups/$ROOT_ID /operation/process-groups/$ROOT_ID"
+        else
+            echo "No flow.json.gz found yet. Root group policies will be added after first NiFi startup."
         fi
 
         for RES in $RESOURCES; do
@@ -250,6 +258,34 @@ data:
         echo '  </policies>' >> "$AUTH_XML"
         echo '</authorizations>' >> "$AUTH_XML"
         echo "Security registry provisioned successfully."
+    fi
+
+    # UPDATE ROOT GROUP POLICIES if flow.json.gz exists but policies are missing
+    # This handles the case where NiFi created the flow after initial provisioning
+    if [ -f "$AUTH_XML" ] && [ -s "$FLOW_FILE" ]; then
+        ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
+        if [ -n "$ROOT_ID" ] && [ "$ROOT_ID" != "null" ] && [ "$ROOT_ID" != "true" ]; then
+            # Check if root group policies already exist
+            if ! grep -q "process-groups/$ROOT_ID" "$AUTH_XML"; then
+                echo "Adding missing root group policies for ROOT_ID: $ROOT_ID"
+                GROUP_ID=$(GET_UUID "group-NiFi Administrators")
+                
+                # Create temporary file with new policies
+                NEW_POLICIES=""
+                for RES in "/process-groups/$ROOT_ID" "/data/process-groups/$ROOT_ID" "/operation/process-groups/$ROOT_ID"; do
+                    for ACT in R W; do
+                        P_ID=$(GET_UUID "policy-$RES-$ACT")
+                        NEW_POLICIES="${NEW_POLICIES}    <policy action=\"$ACT\" identifier=\"$P_ID\" resource=\"$RES\">\n      <group identifier=\"$GROUP_ID\"/>\n    </policy>\n"
+                    done
+                done
+                
+                # Insert before </policies>
+                sed -i "s|</policies>|${NEW_POLICIES}</policies>|" "$AUTH_XML"
+                echo "Root group policies added successfully."
+            else
+                echo "Root group policies already exist for ROOT_ID: $ROOT_ID"
+            fi
+        fi
     fi
 
     echo "DEBUG: users.xml content:"
