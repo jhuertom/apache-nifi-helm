@@ -252,11 +252,11 @@ data:
     echo "Configuring managed-authorizer to use composite provider..."
     sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
     
-    # Set Initial Admin Identity in file-access-policy-provider
-    echo "Setting Initial Admin Identity in file-access-policy-provider to {{ .Values.global.ldap.initialAdminIdentity }}..."
+    # Clear Initial Admin Identity - policies will be added by ldap-admin-setup Job after first login
+    echo "Clearing Initial Admin Identity (will be configured by Job)..."
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
+      --value '' \
       "${authorizers_file}"
     
     echo "LDAP configuration completed. Login with {{ .Values.global.ldap.initialAdminIdentity }} to trigger policy setup."
