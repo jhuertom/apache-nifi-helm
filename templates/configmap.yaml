@@ -268,6 +268,46 @@ data:
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
       --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
+
+    # AUTOMATED ROOT GROUP AUTHORIZATION
+    # NiFi bootstrap doesn't know about existing flow's Root Group ID.
+    # We detect it and add policies manually to prevent inter-node replication errors.
+    FLOW_FILE="${conf_dir}/{{ .Values.persistence.config.files.flowJson }}"
+    if [ -f "$FLOW_FILE" ]; then
+        echo "Found flow file, detecting Root Group ID..."
+        ROOT_GROUP_ID=$(zcat "$FLOW_FILE" | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
+        if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
+            echo "Detected Root Group ID: $ROOT_GROUP_ID. Ensuring policies..."
+            
+            # This function adds the admin to a policy for a specific resource
+            # We use a helper script because authorizers.xml might not be fully initialized yet
+            # or we might need to update it after NiFi's first start.
+            # However, for the very first bootstrap, NiFi creates authorizations.xml.
+            # If it already exists, we ensure the entries are there.
+            AUTH_XML="${conf_dir}/{{ .Values.persistence.config.files.authorizations }}"
+            if [ -f "$AUTH_XML" ]; then
+                ADD_ADMIN_TO_RESOURCE() {
+                    local RES=$1
+                    local ACT=$2
+                    local PID=$(xmlstarlet sel -t -v "//policy[@resource='$RES' and @action='$ACT']/@identifier" "$AUTH_XML")
+                    if [ -n "$PID" ]; then
+                        if ! grep -q "{{ .Values.global.ldap.initialAdminIdentity }}" <<< "$(xmlstarlet sel -t -c "//policy[@identifier='$PID']" "$AUTH_XML")"; then
+                            sed -i "/identifier=\"$PID\"/a \      <user identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"/>" "$AUTH_XML"
+                        fi
+                    else
+                        local NEW_ID=$(cat /proc/sys/kernel/random/uuid)
+                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$NEW_ID\" resource=\"$RES\">\n      <user identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"/>\n    </policy>" "$AUTH_XML"
+                    fi
+                }
+                ADD_ADMIN_TO_RESOURCE "/process-groups/$ROOT_GROUP_ID" "R"
+                ADD_ADMIN_TO_RESOURCE "/process-groups/$ROOT_GROUP_ID" "W"
+                ADD_ADMIN_TO_RESOURCE "/data/process-groups/$ROOT_GROUP_ID" "R"
+                ADD_ADMIN_TO_RESOURCE "/data/process-groups/$ROOT_GROUP_ID" "W"
+                ADD_ADMIN_TO_RESOURCE "/operation/process-groups/$ROOT_GROUP_ID" "W"
+                echo "Root Group policies ensured for admin."
+            fi
+        fi
+    fi
     
     echo "LDAP configuration completed."
     {{- end }}
