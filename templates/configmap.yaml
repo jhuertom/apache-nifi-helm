@@ -149,10 +149,10 @@ data:
     prop_replace 'nifi.security.user.authorizer' 'managed-authorizer'
     prop_replace 'nifi.security.user.login.identity.provider' 'ldap-provider'
     
-    # IMPORTANT: Remove existing authorization files on startup
-    # This ensures clean state when switching to LDAP
-    echo "Cleaning existing authorization files for LDAP fresh start..."
-    rm -f "${PERSISTENT_CONF_DIR}/users.xml" "${PERSISTENT_CONF_DIR}/authorizations.xml"
+    # IMPORTANT: Let NiFi manage authorization files automatically
+    # When users.xml/authorizations.xml don't exist, NiFi creates them with Initial Admin Identity
+    # We should NOT delete them on each restart - that breaks persistent permissions
+    echo "LDAP configured. NiFi will auto-create authorization files if needed."
     
     {{- else }}
     echo "Enabling Single User (Basic) authentication"
@@ -181,7 +181,16 @@ data:
     }
 
     # INITIAL REGISTRY PROVISIONING
-    # If users.xml is missing, we create a complete, synchronized state for the whole cluster.
+    # For LDAP, we let NiFi create users.xml and authorizations.xml automatically
+    # using the Initial Admin Identity. This ensures proper policies for root process group.
+    {{- if .Values.global.ldap.enabled }}
+    if [ ! -f "$USERS_XML" ] && [ ! -f "$AUTH_XML" ]; then
+        echo "LDAP mode: Letting NiFi create initial security registry with Initial Admin Identity..."
+        mkdir -p "$PERSISTENT_CONF_DIR"
+        # NiFi will create these files automatically on first startup
+    fi
+    {{- else }}
+    # Non-LDAP mode: Create users.xml and authorizations.xml manually
     if [ ! -f "$USERS_XML" ]; then
         echo "Provisioning initial security registry..."
         mkdir -p "$PERSISTENT_CONF_DIR"
@@ -259,7 +268,9 @@ data:
         echo '</authorizations>' >> "$AUTH_XML"
         echo "Security registry provisioned successfully."
     fi
+    {{- end }}
 
+    {{- if not .Values.global.ldap.enabled }}
     # UPDATE ROOT GROUP POLICIES if flow.json.gz exists but policies are missing
     # This handles the case where NiFi created the flow after initial provisioning
     if [ -f "$AUTH_XML" ] && [ -s "$FLOW_FILE" ]; then
@@ -307,6 +318,7 @@ data:
             fi
         fi
     fi
+    {{- end }}
 
     echo "DEBUG: users.xml content:"
     [ -f "$USERS_XML" ] && cat "$USERS_XML" || echo "users.xml NOT FOUND"
