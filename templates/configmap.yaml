@@ -88,48 +88,111 @@ data:
     xmlstarlet ed --inplace --update "/stateManagement/cluster-provider[id='kubernetes-provider']/property[@name='ConfigMap Namespace']" --value '{{ include "nifi.stateManagementNamespace" . }}' "conf/state-management.xml"
     {{- end }}
 
-    # Function to list nodes, users, and groups for different roles
-    list_identities () {
-      local role=$1
-      local results=""
-      # Add NiFi nodes
-      for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-        results="${results}<property name=\"$role Node-${i}\">CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
-      done
-      results="${results}<property name=\"$role Node-Ingress\">CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
-      
-      # Role-specific additions
-      if [ "$role" == "Initial User Identity" ]; then
-        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
-        results="${results}<property name=\"$role LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
-        {{- end }}
-      elif [ "$role" == "Initial Group Identity" ]; then
-        # Create a bootstrap admin group
-        results="${results}<property name=\"$role NiFi Admins\">NiFi Admins</property>\n"
-      elif [ "$role" == "NiFi Admins" ]; then
-        # Add members to the NiFi Admins group
-        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-          results="${results}<property name=\"User Identity Node-${i}\">CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
-        done
-        results="${results}<property name=\"User Identity Node-Ingress\">CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
-        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
-        results="${results}<property name=\"User Identity LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
-        {{- end }}
-      fi
-      
-      sed -i -E "s|(<property name=\"$role 1\">.*</property>)|\1\n${results}|g" "${authorizers_file}"
-    }
-    list_identities 'Node Identity'
-    list_identities 'Initial User Identity'
-    list_identities 'Initial Group Identity'
-    # Seed members into the group definition
-    list_identities 'NiFi Admins'
+    # Absolute paths for persistence
+    PERSISTENT_CONF_DIR='/opt/nifi/nifi-current/persistent_conf'
+    USERS_XML="${PERSISTENT_CONF_DIR}/users.xml"
+    AUTH_XML="${PERSISTENT_CONF_DIR}/authorizations.xml"
+    FLOW_FILE="${PERSISTENT_CONF_DIR}/flow.json.gz"
 
-    {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-    # We do NOT add the LDAP admin as Initial User Identity in file provider anymore.
-    # We let the ldap-user-group-provider handle the user identity (generating a UUID based on the username).
-    # The ldap-admin-setup Job will calculate this UUID and assign policies to it.
-    {{- end }}
+    # Deterministic UUID Generator (MD5 based)
+    GET_UUID() {
+      echo -n "$1" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
+    }
+
+    # INITIAL REGISTRY PROVISIONING
+    # If users.xml is missing, we create a complete, synchronized state for the whole cluster.
+    if [ ! -f "$USERS_XML" ]; then
+        echo "Provisioning initial security registry..."
+        mkdir -p "$PERSISTENT_CONF_DIR"
+        
+        # 1. Generate users.xml
+        cat > "$USERS_XML" <<EOF
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<tenants>
+  <users>
+EOF
+        # Add Cluster Nodes
+        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
+          NODE_DN="CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+          NODE_UUID=$(GET_UUID "user-$NODE_DN")
+          echo "    <user identifier=\"$NODE_UUID\" identity=\"$NODE_DN\"/>" >> "$USERS_XML"
+        done
+        # Add Ingress Node
+        INGRESS_DN="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        INGRESS_UUID=$(GET_UUID "user-$INGRESS_DN")
+        echo "    <user identifier=\"$INGRESS_UUID\" identity=\"$INGRESS_DN\"/>" >> "$USERS_XML"
+        
+        # Add LDAP Admin
+        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
+        ADMIN_DN="{{ .Values.global.ldap.initialAdminIdentity }}"
+        ADMIN_UUID=$(GET_UUID "user-$ADMIN_DN")
+        echo "    <user identifier=\"$ADMIN_UUID\" identity=\"$ADMIN_DN\"/>" >> "$USERS_XML"
+        {{- end }}
+        
+        echo "  </users>
+  <groups/>
+</tenants>" >> "$USERS_XML"
+
+        # 2. Generate authorizations.xml
+        cat > "$AUTH_XML" <<EOF
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<authorizations>
+  <policies>
+EOF
+        # Get list of all admin UUIDs
+        ALL_ADMIN_IDS="$INGRESS_UUID"
+        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
+          ALL_ADMIN_IDS="$ALL_ADMIN_IDS $(GET_UUID "user-CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}")"
+        done
+        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
+        ALL_ADMIN_IDS="$ALL_ADMIN_IDS $ADMIN_UUID"
+        {{- end }}
+
+        GRANT_POLICY() {
+            local RES=$1
+            local ACT=$2
+            local PID=$(GET_UUID "policy-$RES-$ACT")
+            echo "    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">" >> "$AUTH_XML"
+            for UID in $ALL_ADMIN_IDS; do
+                echo "      <user identifier=\"$UID\"/>" >> "$AUTH_XML"
+            done
+            echo "    </policy>" >> "$AUTH_XML"
+        }
+
+        # Core policies required for UI and replication
+        GRANT_POLICY "/flow" "R"
+        GRANT_POLICY "/flow" "W"
+        GRANT_POLICY "/controller" "R"
+        GRANT_POLICY "/controller" "W"
+        GRANT_POLICY "/proxy" "W"
+        GRANT_POLICY "/restricted-components" "W"
+        GRANT_POLICY "/tenants" "R"
+        GRANT_POLICY "/tenants" "W"
+        GRANT_POLICY "/policies" "R"
+        GRANT_POLICY "/policies" "W"
+        
+        # Detect Root Process Group from existing flow
+        if [ -f "$FLOW_FILE" ]; then
+            ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
+            if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
+                echo "Found Root Group $ROOT_GROUP_ID. Granting access..."
+                GRANT_POLICY "/process-groups/$ROOT_GROUP_ID" "R"
+                GRANT_POLICY "/process-groups/$ROOT_GROUP_ID" "W"
+                GRANT_POLICY "/data/process-groups/$ROOT_GROUP_ID" "R"
+                GRANT_POLICY "/data/process-groups/$ROOT_GROUP_ID" "W"
+                GRANT_POLICY "/operation/process-groups/$ROOT_GROUP_ID" "W"
+            fi
+        fi
+
+        echo "  </policies>
+</authorizations>" >> "$AUTH_XML"
+        echo "Security registry provisioned successfully."
+    fi
+
+    # Update authorizers.xml paths to point to persistent files
+    conf_dir='/opt/nifi/nifi-current/persistent_conf'
+    sed -i -E "s|(<property name=\"Authorizations File\">).*(</property>)|\1${conf_dir}/authorizations.xml\2|g" "${authorizers_file}"
+    sed -i -E "s|(<property name=\"Users File\">).*(</property>)|\1${conf_dir}/users.xml\2|g" "${authorizers_file}"
 
     {{- /* Configure authorizers.xml for LDAP authentication */}}
     {{- if .Values.global.ldap.enabled }}
@@ -278,29 +341,17 @@ data:
       --value 'file-user-group-provider' \
       "${authorizers_file}"
     
-    # Use composite provider
-    echo "Configuring managed-authorizer to use composite provider..."
-    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
-
-    # Clear Initial Admin Identity (using group instead)
+    # Clear Initial Admin settings - everything is pre-provisioned
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
       --value '' \
       "${authorizers_file}"
-
-    # Set Initial Admin Group - NiFi will grant all permissions to this group
-    echo "Setting Initial Admin Group: NiFi Admins"
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Group']" \
-      --value 'NiFi Admins' \
+      --value '' \
       "${authorizers_file}"
 
-    # Re-enable persistent conf paths in authorizers.xml
-    conf_dir='/opt/nifi/nifi-current/persistent_conf'
-    sed -i -E "s|(<property name=\"Authorizations File\">).*(</property>)|\1${conf_dir}/authorizations.xml\2|g" "${authorizers_file}"
-    sed -i -E "s|(<property name=\"Users File\">).*(</property>)|\1${conf_dir}/users.xml\2|g" "${authorizers_file}"
-
-    echo "LDAP configuration completed with native group bootstrap."
+    echo "LDAP configuration completed with deterministic provisioning."
     {{- end }}
 
     {{- /* Set file and directory paths to persistent locations */}}
