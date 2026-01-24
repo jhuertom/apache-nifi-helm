@@ -44,14 +44,14 @@ spec:
           # Calculate Java-compatible UUID v3 (nameUUIDFromBytes)
           # This matches how NiFi generates UUIDs for LDAP users
           USER_ID=$(python3 -c "import hashlib, uuid, sys;
-name = sys.argv[1].encode('utf-8');
-md5 = hashlib.md5(name).digest();
-md5_bytes = bytearray(md5);
-md5_bytes[6] &= 0x0f;
-md5_bytes[6] |= 0x30;
-md5_bytes[8] &= 0x3f;
-md5_bytes[8] |= 0x80;
-print(str(uuid.UUID(bytes=bytes(md5_bytes))))" "{{ .Values.global.ldap.initialAdminIdentity }}")
+          name = sys.argv[1].encode('utf-8');
+          md5 = hashlib.md5(name).digest();
+          md5_bytes = bytearray(md5);
+          md5_bytes[6] &= 0x0f;
+          md5_bytes[6] |= 0x30;
+          md5_bytes[8] &= 0x3f;
+          md5_bytes[8] |= 0x80;
+          print(str(uuid.UUID(bytes=bytes(md5_bytes))))" "{{ .Values.global.ldap.initialAdminIdentity }}")
           
           echo "Calculated LDAP User UUID: $USER_ID"
             
