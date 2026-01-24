@@ -54,9 +54,10 @@ global:
     initialAdminIdentity: "" # CN=Administrator,DC=example,DC=com
     manager:
       distinguishedName: "" # CN=Administrator,DC=example,DC=com
+      password: "" # If set, a Secret will be created with this password.
       passwordSecretRef:
-        name: ""
-        key: ""
+        name: "" # If empty and password is set, defaults to "ldap-manager-secret"
+        key: "password"
     userSearchBase: "" # DC=example,DC=com
     userSearchFilter: sAMAccountName={0}
     # Optional: Group configuration for LDAP
