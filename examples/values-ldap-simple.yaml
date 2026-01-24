@@ -1,0 +1,62 @@
+# Example values file for NiFi with simple LDAP authentication (non-TLS)
+# Based on the Docker configuration documented in DOCUMENTACION_NIFI_LDAP.md
+
+global:
+  nifi:
+    nodeCount: 3  # LDAP supports clustering
+  
+  # Enable LDAP authentication
+  ldap:
+    enabled: true
+    
+    # LDAP server URL (non-TLS example)
+    url: "ldap://ldap-server:389"
+    
+    # Authentication strategy: SIMPLE for non-TLS LDAP
+    authenticationStrategy: SIMPLE
+    
+    # CRITICAL: Identity Strategy must be USE_USERNAME to match the uid attribute
+    # This ensures that login identity matches the Initial Admin Identity
+    identityStrategy: USE_USERNAME
+    
+    # Initial admin user (must match the uid in LDAP, NOT the full DN)
+    initialAdminIdentity: "nifi-admin"
+    
+    # LDAP Manager credentials for binding
+    manager:
+      distinguishedName: "cn=admin,dc=nifi,dc=org"
+      password: "admin"  # In production, use passwordSecretRef instead
+    
+    # User search configuration
+    userSearchBase: "ou=users,dc=nifi,dc=org"
+    userSearchFilter: "uid={0}"
+    
+    # Optional: Group synchronization
+    groupSearchBase: "ou=groups,dc=nifi,dc=org"
+    groupSearchFilter: "(cn=*)"
+    groupMembershipAttribute: "memberUid"  # For posixGroup
+    groupNameAttribute: "cn"
+
+# LDAP setup requires persistent storage for cluster coordination
+volumeClaims:
+  config:
+    storageClass: "nfs-client"
+    size: "5Gi"
+  state:
+    storageClass: "nfs-client"
+    size: "10Gi"
+  logs:
+    storageClass: "nfs-client"
+    size: "2Gi"
+  flowfile:
+    storageClass: "nfs-client"
+    size: "10Gi"
+  content:
+    storageClass: "nfs-client"
+    size: "15Gi"
+  provenance:
+    storageClass: "nfs-client"
+    size: "10Gi"
+  python-extensions:
+    storageClass: "nfs-client"
+    size: "5Gi"

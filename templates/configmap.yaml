@@ -68,11 +68,92 @@ data:
     # Disable Single User provider completely
     export SINGLE_USER_CREDENTIALS_USERNAME=""
     export SINGLE_USER_CREDENTIALS_PASSWORD=""
+    
     # Remove single-user-provider from login-identity-providers.xml
     xmlstarlet ed --inplace -d "//provider[identifier='single-user-provider']" 'conf/login-identity-providers.xml'
+    
+    # Configure LDAP provider in login-identity-providers.xml
+    echo "Configuring login-identity-providers.xml for LDAP..."
+    
+    # Check if ldap-provider exists, if not create it
+    if ! xmlstarlet sel -t -v "//provider[identifier='ldap-provider']" 'conf/login-identity-providers.xml' > /dev/null 2>&1; then
+      echo "Creating ldap-provider in login-identity-providers.xml..."
+      # Add ldap-provider after removing single-user-provider
+      xmlstarlet ed --inplace \
+        --subnode "/loginIdentityProviders" \
+        --type elem -n "provider" \
+        'conf/login-identity-providers.xml'
+      
+      # Add identifier
+      xmlstarlet ed --inplace \
+        --subnode "//loginIdentityProviders/provider[last()]" \
+        --type elem -n "identifier" -v "ldap-provider" \
+        'conf/login-identity-providers.xml'
+      
+      # Add class
+      xmlstarlet ed --inplace \
+        --subnode "//loginIdentityProviders/provider[last()]" \
+        --type elem -n "class" -v "org.apache.nifi.ldap.LdapProvider" \
+        'conf/login-identity-providers.xml'
+    fi
+    
+    # Configure LDAP provider properties
+    # Helper function to add or update property
+    update_or_add_ldap_property() {
+      local prop_name="$1"
+      local prop_value="$2"
+      local file='conf/login-identity-providers.xml'
+      
+      if xmlstarlet sel -t -v "//provider[identifier='ldap-provider']/property[@name='$prop_name']" "$file" > /dev/null 2>&1; then
+        xmlstarlet ed --inplace \
+          --update "//provider[identifier='ldap-provider']/property[@name='$prop_name']" \
+          --value "$prop_value" \
+          "$file"
+      else
+        xmlstarlet ed --inplace \
+          --subnode "//provider[identifier='ldap-provider']" \
+          --type elem -n "property" -v "$prop_value" \
+          "$file"
+        xmlstarlet ed --inplace \
+          --insert "//provider[identifier='ldap-provider']/property[last()]" \
+          --type attr -n "name" -v "$prop_name" \
+          "$file"
+      fi
+    }
+    
+    update_or_add_ldap_property "Authentication Strategy" "{{ .Values.global.ldap.authenticationStrategy }}"
+    update_or_add_ldap_property "Manager DN" "{{ .Values.global.ldap.manager.distinguishedName }}"
+    update_or_add_ldap_property "Manager Password" "${LDAP_MANAGER_PASSWORD}"
+    update_or_add_ldap_property "Referral Strategy" "FOLLOW"
+    update_or_add_ldap_property "Connect Timeout" "10 secs"
+    update_or_add_ldap_property "Read Timeout" "10 secs"
+    update_or_add_ldap_property "Url" "{{ .Values.global.ldap.url }}"
+    update_or_add_ldap_property "User Search Base" "{{ .Values.global.ldap.userSearchBase }}"
+    update_or_add_ldap_property "User Search Filter" "{{ .Values.global.ldap.userSearchFilter }}"
+    update_or_add_ldap_property "Identity Strategy" "{{ .Values.global.ldap.identityStrategy }}"
+    update_or_add_ldap_property "Authentication Expiration" "12 hours"
+    
+    {{- if or (eq .Values.global.ldap.authenticationStrategy "LDAPS") (eq .Values.global.ldap.authenticationStrategy "START_TLS") }}
+    update_or_add_ldap_property "TLS - Protocol" "{{ .Values.global.ldap.tlsProtocol }}"
+    update_or_add_ldap_property "TLS - Keystore" "${LDAP_TLS_KEYSTORE}"
+    update_or_add_ldap_property "TLS - Keystore Password" "${LDAP_TLS_KEYSTORE_PASSWORD}"
+    update_or_add_ldap_property "TLS - Keystore Type" "PKCS12"
+    update_or_add_ldap_property "TLS - Truststore" "${LDAP_TLS_TRUSTSTORE}"
+    update_or_add_ldap_property "TLS - Truststore Password" "${LDAP_TLS_TRUSTSTORE_PASSWORD}"
+    update_or_add_ldap_property "TLS - Truststore Type" "PKCS12"
+    {{- end }}
+    
+    echo "login-identity-providers.xml configured successfully."
+    
     # Set the authorizer and login identity provider
     prop_replace 'nifi.security.user.authorizer' 'managed-authorizer'
     prop_replace 'nifi.security.user.login.identity.provider' 'ldap-provider'
+    
+    # IMPORTANT: Remove existing authorization files on startup
+    # This ensures clean state when switching to LDAP
+    echo "Cleaning existing authorization files for LDAP fresh start..."
+    rm -f "${PERSISTENT_CONF_DIR}/users.xml" "${PERSISTENT_CONF_DIR}/authorizations.xml"
+    
     {{- else }}
     echo "Enabling Single User (Basic) authentication"
     prop_replace 'nifi.security.user.authorizer' 'single-user-authorizer'
@@ -319,19 +400,25 @@ data:
     sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
     sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
     
+    # CRITICAL FIX: Configure composite provider with correct order
+    # LDAP provider must be first, file provider second
+    # This ensures LDAP users are found first and not duplicated in file provider
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
-      --value 'ldap-user-group-provider' \
+      --value 'file-user-group-provider' \
       "${authorizers_file}"
 
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 2']" \
-      --value 'file-user-group-provider' \
+      --value 'ldap-user-group-provider' \
       "${authorizers_file}"
     
-    # Use composite provider
+    # Use composite provider in managed-authorizer
     echo "Configuring managed-authorizer to use composite provider..."
-    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
+    xmlstarlet ed --inplace \
+      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='User Group Provider']" \
+      --value 'composite-configurable-user-group-provider' \
+      "${authorizers_file}"
 
     # Native Bootstrap Alignment - Set Initial Admin Identity in authorizers.xml
     {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}

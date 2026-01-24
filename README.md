@@ -201,25 +201,85 @@ global:
 ```
 
 ### LDAP Authentication
+
+LDAP authentication enables centralized user management with support for Active Directory, OpenLDAP, and other LDAP servers.
+
+**Complete Configuration Example:**
 ```yaml
 global:
   nifi:
-    nodeCount: 3  # Clustering supported
+    nodeCount: 3  # LDAP supports clustering
   ldap:
     enabled: true
-    url: "ldaps://ldap.company.com:636"
+    url: "ldaps://ldap.company.com:636"  # or ldap://ldap:389 for non-TLS
     tlsProtocol: "TLSv1.2"
-    authenticationStrategy: "LDAPS"
-    identityStrategy: "USE_USERNAME"
-    initialAdminIdentity: "CN=NiFi Admin,OU=Users,DC=company,DC=com"
+    authenticationStrategy: "LDAPS"  # SIMPLE|LDAPS|START_TLS
+    identityStrategy: "USE_USERNAME"  # USE_USERNAME (recommended) or USE_DN
+    initialAdminIdentity: "nifi-admin"  # Username (if USE_USERNAME) or full DN (if USE_DN)
     manager:
-      distinguishedName: "CN=Service Account,OU=Services,DC=company,DC=com"
+      distinguishedName: "cn=admin,dc=nifi,dc=org"
+      password: "secret"  # Or use passwordSecretRef for production
       passwordSecretRef:
         name: "ldap-manager-secret"
         key: "password"
-    userSearchBase: "OU=Users,DC=company,DC=com"
-    userSearchFilter: "sAMAccountName={0}"
+    userSearchBase: "ou=users,dc=nifi,dc=org"
+    userSearchFilter: "uid={0}"  # or sAMAccountName={0} for Active Directory
+    # Optional: Group synchronization
+    groupSearchBase: "ou=groups,dc=nifi,dc=org"
+    groupSearchFilter: "(cn=*)"  # or (member={0}) for AD
+    groupMembershipAttribute: "memberUid"  # or "member" for AD
+    groupNameAttribute: "cn"
 ```
+
+**Quick Start with Simple LDAP (Non-TLS):**
+```yaml
+global:
+  ldap:
+    enabled: true
+    url: "ldap://ldap-server:389"
+    authenticationStrategy: "SIMPLE"
+    identityStrategy: "USE_USERNAME"
+    initialAdminIdentity: "nifi-admin"
+    manager:
+      distinguishedName: "cn=admin,dc=nifi,dc=org"
+      password: "admin"
+    userSearchBase: "ou=users,dc=nifi,dc=org"
+    userSearchFilter: "uid={0}"
+```
+
+**⚠️ Critical Configuration Points:**
+
+1. **Identity Strategy** (Most Important):
+   - `USE_USERNAME`: User identity is the username only (e.g., `nifi-admin`)
+   - `USE_DN`: User identity is the full DN (e.g., `uid=nifi-admin,ou=users,dc=nifi,dc=org`)
+   - **Recommendation**: Always use `USE_USERNAME` to avoid permission errors
+
+2. **Initial Admin Identity**:
+   - Must match exactly what the identity will be after authentication
+   - If `identityStrategy: USE_USERNAME`, use just the username: `nifi-admin`
+   - If `identityStrategy: USE_DN`, use the full DN: `uid=nifi-admin,ou=users,dc=nifi,dc=org`
+
+3. **Authentication Strategy**:
+   - `SIMPLE`: Plain LDAP (port 389, no TLS)
+   - `LDAPS`: LDAP over SSL (port 636, TLS)
+   - `START_TLS`: LDAP with STARTTLS (port 389, TLS upgraded)
+
+**Validation:**
+Before deploying, validate your LDAP configuration:
+```bash
+./scripts/validate-ldap-values.sh examples/values-ldap-simple.yaml
+```
+
+**Complete Documentation:**
+See [docs/LDAP_CONFIGURATION.md](docs/LDAP_CONFIGURATION.md) for:
+- Detailed configuration guide
+- Active Directory examples
+- Troubleshooting common issues
+- Security best practices
+
+**Example Files:**
+- [examples/values-ldap-simple.yaml](examples/values-ldap-simple.yaml) - Simple LDAP (non-TLS)
+- [examples/values-auth-ldap.yaml](examples/values-auth-ldap.yaml) - LDAPS with Active Directory
 
 ### Authentication Examples
 See the [`examples/`](examples/) directory for complete configuration files:
