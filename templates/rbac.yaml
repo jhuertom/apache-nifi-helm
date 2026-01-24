@@ -19,8 +19,8 @@ rules:
     verbs: ["get", "list", "create", "update", "patch", "delete"]
   # Permissions to read pods (for cluster membership)
   - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "watch", "create"]
   # Permissions for events (optional, for better observability)
   - apiGroups: [""]
     resources: ["events"]
