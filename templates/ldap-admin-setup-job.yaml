@@ -140,8 +140,5 @@ spec:
               echo "ERROR: Could not find user UUID"
               exit 1
             fi
-            else
-              echo "ERROR: Could not calculate user UUID or Root Group ID"
-              exit 1
-            fi
+
 {{- end }}
