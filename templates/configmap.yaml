@@ -242,16 +242,21 @@ data:
       --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
       --value 'ldap-user-group-provider' \
       "${authorizers_file}"
+
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 2']" \
+      --value 'file-user-group-provider' \
+      "${authorizers_file}"
     
     # Use composite provider
     echo "Configuring managed-authorizer to use composite provider..."
     sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
     
-    # Clear Initial Admin Identity - policies will be added by ldap-admin-setup Job after first login
-    echo "Clearing Initial Admin Identity (will be configured by Job after first login)..."
+    # Set Initial Admin Identity in file-access-policy-provider
+    echo "Setting Initial Admin Identity in file-access-policy-provider to {{ .Values.global.ldap.initialAdminIdentity }}..."
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value '' \
+      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
     
     echo "LDAP configuration completed. Login with {{ .Values.global.ldap.initialAdminIdentity }} to trigger policy setup."
