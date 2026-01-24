@@ -181,32 +181,271 @@ data:
     }
 
     # INITIAL REGISTRY PROVISIONING
-    # For LDAP, we need to create users.xml with the Initial Admin Identity
-    # so FileAccessPolicyProvider can find it and create initial policies
+    # For LDAP, we create complete users.xml and authorizations.xml
+    # with all necessary users (admin, nodes, ingress) and policies
     {{- if .Values.global.ldap.enabled }}
-    if [ ! -f "$USERS_XML" ]; then
-        echo "LDAP mode: Creating users.xml with Initial Admin Identity for policy seeding..."
+    if [ ! -f "$USERS_XML" ] || [ ! -f "$AUTH_XML" ]; then
+        echo "LDAP mode: Creating users.xml and authorizations.xml with all identities..."
         mkdir -p "$PERSISTENT_CONF_DIR"
         
+        # Define all identities with deterministic UUIDs
         ADMIN_IDENTITY="{{ .Values.global.ldap.initialAdminIdentity }}"
         ADMIN_ID=$(GET_UUID "user-$ADMIN_IDENTITY")
         
-        # Also add node identities for cluster communication
+        # Ingress identity (used by the Kubernetes ingress controller)
+        INGRESS_DN="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        INGRESS_ID=$(GET_UUID "user-$INGRESS_DN")
+        
+        # Node identities
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+        NODE{{ $i }}_ID=$(GET_UUID "user-$NODE{{ $i }}_DN")
+        {{- end }}
+        
+        # ========== CREATE USERS.XML ==========
         echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
         echo '<tenants>' >> "$USERS_XML"
         echo '  <groups/>' >> "$USERS_XML"
         echo '  <users>' >> "$USERS_XML"
         echo "    <user identifier=\"$ADMIN_ID\" identity=\"$ADMIN_IDENTITY\"/>" >> "$USERS_XML"
+        echo "    <user identifier=\"$INGRESS_ID\" identity=\"$INGRESS_DN\"/>" >> "$USERS_XML"
         {{- range $i := until (int .Values.global.nifi.nodeCount) }}
-        NODE_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
-        NODE_ID=$(GET_UUID "user-$NODE_DN")
-        echo "    <user identifier=\"$NODE_ID\" identity=\"$NODE_DN\"/>" >> "$USERS_XML"
+        echo "    <user identifier=\"$NODE{{ $i }}_ID\" identity=\"$NODE{{ $i }}_DN\"/>" >> "$USERS_XML"
         {{- end }}
         echo '  </users>' >> "$USERS_XML"
         echo '</tenants>' >> "$USERS_XML"
         
-        echo "Created users.xml with admin: $ADMIN_IDENTITY"
-        cat "$USERS_XML"
+        echo "Created users.xml with admin, ingress and node identities"
+        
+        # ========== CREATE AUTHORIZATIONS.XML ==========
+        # Get ROOT_ID if flow exists, otherwise leave empty (NiFi will update later)
+        ROOT_ID=""
+        if [ -s "$FLOW_FILE" ]; then
+            ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
+            [ "$ROOT_ID" = "null" ] && ROOT_ID=""
+        fi
+        
+        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$AUTH_XML"
+        echo '<authorizations>' >> "$AUTH_XML"
+        echo '  <policies>' >> "$AUTH_XML"
+        
+        # /flow - Admin only (read)
+        P_ID=$(GET_UUID "policy-/flow-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/flow\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /controller - Admin, Ingress and all nodes (read/write)
+        P_ID=$(GET_UUID "policy-/controller-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/controller\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "      <user identifier=\"$INGRESS_ID\"/>" >> "$AUTH_XML"
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+        {{- end }}
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/controller-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/controller\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "      <user identifier=\"$INGRESS_ID\"/>" >> "$AUTH_XML"
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+        {{- end }}
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /proxy - Ingress and all nodes (required for cluster communication)
+        P_ID=$(GET_UUID "policy-/proxy-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/proxy\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$INGRESS_ID\"/>" >> "$AUTH_XML"
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+        {{- end }}
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/proxy-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/proxy\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$INGRESS_ID\"/>" >> "$AUTH_XML"
+        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+        {{- end }}
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /tenants - Admin only
+        P_ID=$(GET_UUID "policy-/tenants-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/tenants\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/tenants-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/tenants\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /policies - Admin only
+        P_ID=$(GET_UUID "policy-/policies-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/policies\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/policies-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/policies\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /restricted-components - Admin only
+        P_ID=$(GET_UUID "policy-/restricted-components-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/restricted-components\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/restricted-components-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/restricted-components\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /counters - Admin only
+        P_ID=$(GET_UUID "policy-/counters-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/counters\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/counters-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/counters\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /system - Admin only
+        P_ID=$(GET_UUID "policy-/system-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/system\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /provenance - Admin only
+        P_ID=$(GET_UUID "policy-/provenance-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/provenance\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        P_ID=$(GET_UUID "policy-/provenance-W")
+        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/provenance\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # /site-to-site - Admin only
+        P_ID=$(GET_UUID "policy-/site-to-site-R")
+        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/site-to-site\">" >> "$AUTH_XML"
+        echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+        echo "    </policy>" >> "$AUTH_XML"
+        
+        # Root Process Group policies (if flow exists)
+        if [ -n "$ROOT_ID" ]; then
+            echo "Adding root process group policies for ROOT_ID: $ROOT_ID"
+            
+            P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-R")
+            echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
+            echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            echo "    </policy>" >> "$AUTH_XML"
+            
+            P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-W")
+            echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
+            echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            echo "    </policy>" >> "$AUTH_XML"
+            
+            P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")
+            echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/data/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
+            echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+            echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+            {{- end }}
+            echo "    </policy>" >> "$AUTH_XML"
+            
+            P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-W")
+            echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/data/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
+            echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+            echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+            {{- end }}
+            echo "    </policy>" >> "$AUTH_XML"
+            
+            P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")
+            echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
+            echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            echo "    </policy>" >> "$AUTH_XML"
+            
+            P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")
+            echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
+            echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            echo "    </policy>" >> "$AUTH_XML"
+        else
+            echo "No flow.json.gz found yet. Root group policies will be added by NiFi automatically."
+        fi
+        
+        echo '  </policies>' >> "$AUTH_XML"
+        echo '</authorizations>' >> "$AUTH_XML"
+        
+        echo "Created authorizations.xml with all required policies"
+    fi
+    
+    # UPDATE ROOT GROUP POLICIES if flow.json.gz exists but policies are missing
+    # This handles the case where NiFi created the flow after initial provisioning
+    if [ -f "$AUTH_XML" ] && [ -s "$FLOW_FILE" ]; then
+        ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
+        if [ -n "$ROOT_ID" ] && [ "$ROOT_ID" != "null" ]; then
+            # Check if root group policies already exist
+            if ! grep -q "process-groups/$ROOT_ID" "$AUTH_XML"; then
+                echo "Adding missing root group policies for ROOT_ID: $ROOT_ID"
+                ADMIN_ID=$(GET_UUID "user-{{ .Values.global.ldap.initialAdminIdentity }}")
+                {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+                NODE{{ $i }}_ID=$(GET_UUID "user-$NODE{{ $i }}_DN")
+                {{- end }}
+                
+                # Create temporary file with new policies
+                {
+                    P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-R")
+                    echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">"
+                    echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    echo "    </policy>"
+                    
+                    P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-W")
+                    echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">"
+                    echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    echo "    </policy>"
+                    
+                    P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")
+                    echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/data/process-groups/$ROOT_ID\">"
+                    echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                    {{- end }}
+                    echo "    </policy>"
+                    
+                    P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-W")
+                    echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/data/process-groups/$ROOT_ID\">"
+                    echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                    {{- end }}
+                    echo "    </policy>"
+                    
+                    P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")
+                    echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">"
+                    echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    echo "    </policy>"
+                    
+                    P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")
+                    echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">"
+                    echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    echo "    </policy>"
+                } > /tmp/new_policies.xml
+                
+                # Insert before </policies>
+                sed -i '/<\/policies>/e cat /tmp/new_policies.xml' "$AUTH_XML"
+                rm -f /tmp/new_policies.xml
+                echo "Root group policies added successfully."
+            fi
+        fi
     fi
     {{- else }}
     # Non-LDAP mode: Create users.xml and authorizations.xml manually
