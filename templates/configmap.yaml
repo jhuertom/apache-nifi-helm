@@ -400,16 +400,12 @@ data:
     sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
     sed -i '/To enable the composite-configurable-user-group-provider remove 2 lines. This is 2 of 2. -->/d' "${authorizers_file}"
     
-    # CRITICAL FIX: Configure composite provider with correct order
-    # LDAP provider must be first, file provider second
-    # This ensures LDAP users are found first and not duplicated in file provider
+    # CRITICAL FIX: composite-configurable-user-group-provider already has file-user-group-provider
+    # as its internal configurable provider. We only need to add ldap-user-group-provider
+    # as the non-configurable provider in position 1.
+    # DO NOT add file-user-group-provider here - it causes "Duplicate provider" error
     xmlstarlet ed --inplace \
       --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 1']" \
-      --value 'file-user-group-provider' \
-      "${authorizers_file}"
-
-    xmlstarlet ed --inplace \
-      --update "//userGroupProvider[identifier='composite-configurable-user-group-provider']/property[@name='User Group Provider 2']" \
       --value 'ldap-user-group-provider' \
       "${authorizers_file}"
     
