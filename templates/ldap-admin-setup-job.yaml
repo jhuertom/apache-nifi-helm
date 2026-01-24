@@ -62,7 +62,6 @@ spec:
                 
                 # Create script to add policies
                 kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
-                kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
                   USER_ID='$USER_ID'
                   ROOT_GROUP_ID='$ROOT_GROUP_ID'
                   AUTH_FILE='/opt/nifi/nifi-current/persistent_conf/authorizations.xml'
