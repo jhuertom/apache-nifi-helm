@@ -88,19 +88,25 @@ data:
     xmlstarlet ed --inplace --update "/stateManagement/cluster-provider[id='kubernetes-provider']/property[@name='ConfigMap Namespace']" --value '{{ include "nifi.stateManagementNamespace" . }}' "conf/state-management.xml"
     {{- end }}
 
-    {{- /* Grant nodes cluster permissions */}}
+    # Function to list nodes and users for different roles
     list_identities () {
-      node_identities=""
+      local role=$1
+      local results=""
+      # Add NiFi nodes
       for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-        node_dn="CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-        node_identities="${node_identities}<property name=\"$1 Node-${i}\">${node_dn}</property>\n"
+        results="${results}<property name=\"$role Node-${i}\">CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
       done
-      ingress_dn="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-      node_identities="${node_identities}<property name=\"$1 Node-Ingress\">${ingress_dn}</property>\n"
-      {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
-      node_identities="${node_identities}<property name=\"$1 LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
-      {{- end }}
-      sed -i -E "s|(<property name=\"$1 1\">.*</property>)|\1\n${node_identities}|g" "${authorizers_file}"
+      results="${results}<property name=\"$role Node-Ingress\">CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
+      
+      # Add LDAP Admin ONLY to Initial User Identity role (to seed it in users.xml)
+      # and Initial Admin Identity (handled separately)
+      if [ "$role" == "Initial User Identity" ]; then
+        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
+        results="${results}<property name=\"$role LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
+        {{- end }}
+      fi
+      
+      sed -i -E "s|(<property name=\"$role 1\">.*</property>)|\1\n${results}|g" "${authorizers_file}"
     }
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
@@ -269,45 +275,68 @@ data:
       --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
 
-    # AUTOMATED ROOT GROUP AUTHORIZATION
-    # NiFi bootstrap doesn't know about existing flow's Root Group ID.
-    # We detect it and add policies manually to prevent inter-node replication errors.
-    FLOW_FILE="${conf_dir}/{{ .Values.persistence.config.files.flowJson }}"
-    if [ -f "$FLOW_FILE" ]; then
-        echo "Found flow file, detecting Root Group ID..."
-        ROOT_GROUP_ID=$(zcat "$FLOW_FILE" | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
-        if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
-            echo "Detected Root Group ID: $ROOT_GROUP_ID. Ensuring policies..."
-            
-            # This function adds the admin to a policy for a specific resource
-            # We use a helper script because authorizers.xml might not be fully initialized yet
-            # or we might need to update it after NiFi's first start.
-            # However, for the very first bootstrap, NiFi creates authorizations.xml.
-            # If it already exists, we ensure the entries are there.
-            AUTH_XML="${conf_dir}/{{ .Values.persistence.config.files.authorizations }}"
-            if [ -f "$AUTH_XML" ]; then
-                ADD_ADMIN_TO_RESOURCE() {
+    # AUTOMATED ROOT GROUP AND CLUSTER NODE AUTHORIZATION
+    # We background this process because on the first bootstrap, NiFi creates these files AFTER this script starts.
+    (
+        echo "Background patcher started. Waiting for NiFi to initialize XML files..."
+        FLOW_FILE="${conf_dir}/{{ .Values.persistence.config.files.flowJson }}"
+        AUTH_XML="${conf_dir}/{{ .Values.persistence.config.files.authorizations }}"
+        USERS_XML="${conf_dir}/{{ .Values.persistence.config.files.users }}"
+        
+        # Wait up to 5 minutes for files to appear
+        for i in {1..60}; do
+            if [ -f "$AUTH_XML" ] && [ -f "$USERS_XML" ]; then
+                echo "Files found. Patching authorizations for cluster replication..."
+                sleep 5 # Wait a bit more for NiFi to finish writing
+                
+                # Get Admin UUID
+                ADMIN_ID=$(xmlstarlet sel -t -v "//user[@identity='{{ .Values.global.ldap.initialAdminIdentity }}']/@identifier" "$USERS_XML")
+                
+                # Get Node UUIDs
+                NODE_IDS=$(xmlstarlet sel -t -v "//user[starts-with(@identity, 'CN=')]/@identifier" "$USERS_XML")
+                
+                # Function to grant a list of identifiers to a resource
+                GRANT_ACCESS() {
                     local RES=$1
                     local ACT=$2
+                    local IDS=$3
                     local PID=$(xmlstarlet sel -t -v "//policy[@resource='$RES' and @action='$ACT']/@identifier" "$AUTH_XML")
-                    if [ -n "$PID" ]; then
-                        if ! grep -q "{{ .Values.global.ldap.initialAdminIdentity }}" <<< "$(xmlstarlet sel -t -c "//policy[@identifier='$PID']" "$AUTH_XML")"; then
-                            sed -i "/identifier=\"$PID\"/a \      <user identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"/>" "$AUTH_XML"
-                        fi
-                    else
+                    
+                    if [ -z "$PID" ]; then
                         local NEW_ID=$(cat /proc/sys/kernel/random/uuid)
-                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$NEW_ID\" resource=\"$RES\">\n      <user identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"/>\n    </policy>" "$AUTH_XML"
+                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$NEW_ID\" resource=\"$RES\">\n    </policy>" "$AUTH_XML"
+                        PID=$NEW_ID
                     fi
+                    
+                    for ID in $IDS; do
+                        if ! grep -q "user identifier=\"$ID\"" <<< "$(xmlstarlet sel -t -c "//policy[@identifier='$PID']" "$AUTH_XML")"; then
+                            sed -i "/identifier=\"$PID\"/a \      <user identifier=\"$ID\"/>" "$AUTH_XML"
+                        fi
+                    done
                 }
-                ADD_ADMIN_TO_RESOURCE "/process-groups/$ROOT_GROUP_ID" "R"
-                ADD_ADMIN_TO_RESOURCE "/process-groups/$ROOT_GROUP_ID" "W"
-                ADD_ADMIN_TO_RESOURCE "/data/process-groups/$ROOT_GROUP_ID" "R"
-                ADD_ADMIN_TO_RESOURCE "/data/process-groups/$ROOT_GROUP_ID" "W"
-                ADD_ADMIN_TO_RESOURCE "/operation/process-groups/$ROOT_GROUP_ID" "W"
-                echo "Root Group policies ensured for admin."
+                
+                # Get Root Group ID from flow
+                ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
+                
+                # CORE PERMISSIONS FOR ADMIN + ALL NODES
+                ALL_ADMINS="$ADMIN_ID $NODE_IDS"
+                
+                GRANT_ACCESS "/flow" "R" "$ALL_ADMINS"
+                GRANT_ACCESS "/flow" "W" "$ALL_ADMINS"
+                
+                if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
+                    GRANT_ACCESS "/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
+                    GRANT_ACCESS "/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
+                    GRANT_ACCESS "/data/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
+                    GRANT_ACCESS "/data/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
+                    GRANT_ACCESS "/operation/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
+                fi
+                echo "Root Group and Cluster Node policies verified background."
+                break
             fi
-        fi
-    fi
+            sleep 5
+        done
+    ) &
     
     echo "LDAP configuration completed."
     {{- end }}
