@@ -97,6 +97,9 @@ data:
       done
       ingress_dn="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
       node_identities="${node_identities}<property name=\"$1 Node-Ingress\">${ingress_dn}</property>\n"
+      {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
+      node_identities="${node_identities}<property name=\"$1 LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
+      {{- end }}
       sed -i -E "s|(<property name=\"$1 1\">.*</property>)|\1\n${node_identities}|g" "${authorizers_file}"
     }
     list_identities 'Node Identity'
