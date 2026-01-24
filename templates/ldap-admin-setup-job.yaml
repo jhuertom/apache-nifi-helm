@@ -75,26 +75,26 @@ spec:
                   
                   # Function to add user to policy
                   add_user_to_policy() {
-                    RESOURCE=$1
-                    ACTION=$2
+                    RESOURCE=\$1
+                    ACTION=\$2
                     
                     # Check if policy exists using xmlstarlet
-                    POLICY_ID=$(xmlstarlet sel -t -v "//policy[@resource='$RESOURCE' and @action='$ACTION']/@identifier" "$AUTH_FILE")
+                    POLICY_ID=\$(xmlstarlet sel -t -v \"//policy[@resource='\$RESOURCE' and @action='\$ACTION']/@identifier\" \"\$AUTH_FILE\")
                     
-                    if [ -n "$POLICY_ID" ]; then
+                    if [ -n \"\$POLICY_ID\" ]; then
                       # Policy exists, check if user is in it
-                      if ! xmlstarlet sel -t -v "//policy[@identifier='$POLICY_ID']/user[@identifier='$USER_ID']/@identifier" "$AUTH_FILE" | grep -q .; then
+                      if ! xmlstarlet sel -t -v \"//policy[@identifier='\$POLICY_ID']/user[@identifier='\$USER_ID']/@identifier\" \"\$AUTH_FILE\" | grep -q .; then
                         # Add user to existing policy
-                        sed -i "/identifier=\"$POLICY_ID\"/a \      <user identifier=\"$USER_ID\"/>" "$AUTH_FILE"
-                        echo "Added user to existing $RESOURCE $ACTION policy ($POLICY_ID)"
+                        sed -i \"/identifier=\\\"\$POLICY_ID\\\"/a \      <user identifier=\\\"\$USER_ID\\\"/>\" \"\$AUTH_FILE\"
+                        echo \"Added user to existing \$RESOURCE \$ACTION policy (\$POLICY_ID)\"
                       else
-                        echo "User already in $RESOURCE $ACTION policy"
+                        echo \"User already in \$RESOURCE \$ACTION policy\"
                       fi
                     else
                       # Create new policy
-                      POLICY_ID=$(cat /proc/sys/kernel/random/uuid)
-                      sed -i "/<\/policies>/i\    <policy action=\"$ACTION\" identifier=\"$POLICY_ID\" resource=\"$RESOURCE\">\n      <user identifier=\"$USER_ID\"/>\n    </policy>" "$AUTH_FILE"
-                      echo "Created new $RESOURCE $ACTION policy ($POLICY_ID)"
+                      POLICY_ID=\$(cat /proc/sys/kernel/random/uuid)
+                      sed -i \"/<\/policies>/i\    <policy action=\\\"\$ACTION\\\" identifier=\\\"\$POLICY_ID\\\" resource=\\\"\$RESOURCE\\\">\n      <user identifier=\\\"\$USER_ID\\\"/>\n    </policy>\" \"\$AUTH_FILE\"
+                      echo \"Created new \$RESOURCE \$ACTION policy (\$POLICY_ID)\"
                     fi
                   }
                   
@@ -112,11 +112,11 @@ spec:
                   # Root Process Group UUID passed from Job pod
                   # ROOT_GROUP_ID already set
                   
-                  if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
-                    add_user_to_policy "/process-groups/$ROOT_GROUP_ID" 'R'
-                    add_user_to_policy "/process-groups/$ROOT_GROUP_ID" 'W'
-                    add_user_to_policy "/data/process-groups/$ROOT_GROUP_ID" 'R'
-                    add_user_to_policy "/data/process-groups/$ROOT_GROUP_ID" 'W'
+                  if [ -n \"\$ROOT_GROUP_ID\" ] && [ \"\$ROOT_GROUP_ID\" != \"null\" ]; then
+                    add_user_to_policy \"/process-groups/\$ROOT_GROUP_ID\" 'R'
+                    add_user_to_policy \"/process-groups/\$ROOT_GROUP_ID\" 'W'
+                    add_user_to_policy \"/data/process-groups/\$ROOT_GROUP_ID\" 'R'
+                    add_user_to_policy \"/data/process-groups/\$ROOT_GROUP_ID\" 'W'
                   fi
 
                   add_user_to_policy '/process-groups/root' 'R'
