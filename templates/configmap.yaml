@@ -72,38 +72,36 @@ data:
     # CRITICAL: Create a clean login-identity-providers.xml with only ldap-provider
     # The original file has commented sections that cause duplicate provider issues
     echo "Creating clean login-identity-providers.xml for LDAP..."
-    cat > 'conf/login-identity-providers.xml' << 'LDAP_LOGIN_EOF'
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<loginIdentityProviders>
-    <provider>
-        <identifier>ldap-provider</identifier>
-        <class>org.apache.nifi.ldap.LdapProvider</class>
-        <property name="Authentication Strategy">{{ .Values.global.ldap.authenticationStrategy }}</property>
-        <property name="Manager DN">{{ .Values.global.ldap.manager.distinguishedName }}</property>
-        <property name="Manager Password">LDAP_MANAGER_PASSWORD_PLACEHOLDER</property>
-        <property name="TLS - Keystore"></property>
-        <property name="TLS - Keystore Password"></property>
-        <property name="TLS - Keystore Type"></property>
-        <property name="TLS - Truststore"></property>
-        <property name="TLS - Truststore Password"></property>
-        <property name="TLS - Truststore Type"></property>
-        <property name="TLS - Client Auth"></property>
-        <property name="TLS - Protocol">{{ .Values.global.ldap.tlsProtocol }}</property>
-        <property name="TLS - Shutdown Gracefully"></property>
-        <property name="Referral Strategy">FOLLOW</property>
-        <property name="Connect Timeout">10 secs</property>
-        <property name="Read Timeout">10 secs</property>
-        <property name="Url">{{ .Values.global.ldap.url }}</property>
-        <property name="User Search Base">{{ .Values.global.ldap.userSearchBase }}</property>
-        <property name="User Search Filter">{{ .Values.global.ldap.userSearchFilter }}</property>
-        <property name="Identity Strategy">{{ .Values.global.ldap.identityStrategy }}</property>
-        <property name="Authentication Expiration">12 hours</property>
-    </provider>
-</loginIdentityProviders>
-LDAP_LOGIN_EOF
     
-    # Replace password placeholder with actual value (avoids issues with special chars in heredoc)
-    sed -i "s|LDAP_MANAGER_PASSWORD_PLACEHOLDER|${LDAP_MANAGER_PASSWORD}|g" 'conf/login-identity-providers.xml'
+    # Build the XML file using printf to avoid YAML parsing issues
+    LOGIN_PROVIDERS_FILE='conf/login-identity-providers.xml'
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' > "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '<loginIdentityProviders>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '    <provider>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <identifier>ldap-provider</identifier>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <class>org.apache.nifi.ldap.LdapProvider</class>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Authentication Strategy">{{ .Values.global.ldap.authenticationStrategy }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Manager DN">{{ .Values.global.ldap.manager.distinguishedName }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' "        <property name=\"Manager Password\">${LDAP_MANAGER_PASSWORD}</property>" >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Keystore"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Keystore Password"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Keystore Type"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Truststore"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Truststore Password"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Truststore Type"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Client Auth"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Protocol">{{ .Values.global.ldap.tlsProtocol }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="TLS - Shutdown Gracefully"></property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Referral Strategy">FOLLOW</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Connect Timeout">10 secs</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Read Timeout">10 secs</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Url">{{ .Values.global.ldap.url }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="User Search Base">{{ .Values.global.ldap.userSearchBase }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="User Search Filter">{{ .Values.global.ldap.userSearchFilter }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Identity Strategy">{{ .Values.global.ldap.identityStrategy }}</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '        <property name="Authentication Expiration">12 hours</property>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '    </provider>' >> "$LOGIN_PROVIDERS_FILE"
+    printf '%s\n' '</loginIdentityProviders>' >> "$LOGIN_PROVIDERS_FILE"
     
     {{- if or (eq .Values.global.ldap.authenticationStrategy "LDAPS") (eq .Values.global.ldap.authenticationStrategy "START_TLS") }}
     # Configure TLS settings for secure LDAP
