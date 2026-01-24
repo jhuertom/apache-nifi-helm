@@ -128,8 +128,8 @@ data:
         {{- end }}
 
         # 1. Generate users.xml
-        # Using %b to expand \n into real newlines.
-        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<tenants>\n  <users>\n%b  </users>\n  <groups/>\n</tenants>\n' "$USER_DEFINITIONS" > "$USERS_XML"
+        # Using %b to expand \n into real newlines. No <groups/> tag as per NiFi 2.x schema if empty.
+        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<tenants>\n  <users>\n%b  </users>\n</tenants>\n' "$USER_DEFINITIONS" > "$USERS_XML"
 
         # 2. Generate authorizations.xml
         POLICY_DEFINITIONS=""
@@ -156,9 +156,9 @@ data:
         ADD_POLICY "/policies" "R"
         ADD_POLICY "/policies" "W"
         
-        # Root Group
-        if [ -f "$FLOW_FILE" ]; then
-            ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
+        # Root Group - Safe check for flow file
+        if [ -s "$FLOW_FILE" ]; then
+            ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
             if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
                 echo "Found Root Group $ROOT_GROUP_ID. Provisioning access..."
                 ADD_POLICY "/process-groups/$ROOT_GROUP_ID" "R"
