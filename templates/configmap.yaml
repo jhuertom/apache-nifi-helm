@@ -128,7 +128,6 @@ data:
         {{- end }}
         
         echo '  </users>' >> "$USERS_XML"
-        echo '  <groups/>' >> "$USERS_XML"
         echo '</tenants>' >> "$USERS_XML"
 
         # 2. Generate authorizations.xml
@@ -337,7 +336,11 @@ data:
       --value 'file-user-group-provider' \
       "${authorizers_file}"
     
-    # Clear Initial Admin settings - everything is pre-provisioned
+    # Use composite provider
+    echo "Configuring managed-authorizer to use composite provider..."
+    sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
+
+    # Clear any leftover Initial Admin settings to ensure our pre-provisioned files are used
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
       --value '' \
