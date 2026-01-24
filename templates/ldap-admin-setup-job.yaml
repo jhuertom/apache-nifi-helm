@@ -93,8 +93,8 @@ spec:
                   add_user_to_policy '/tenants' 'W'
                   add_user_to_policy '/restricted-components' 'W'
                   add_user_to_policy '/provenance' 'R'
-                  add_user_to_policy '/data/process-groups/root' 'R'
-                  add_user_to_policy '/data/process-groups/root' 'W'
+                  add_user_to_policy '/process-groups/root' 'R'
+                  add_user_to_policy '/process-groups/root' 'W'
                   add_user_to_policy '/system' 'R'
                   
                   echo 'Admin policies added successfully'
