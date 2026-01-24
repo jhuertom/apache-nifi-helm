@@ -150,7 +150,10 @@ data:
     printf '%s\n' '        <identifier>file-user-group-provider</identifier>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '        <class>org.apache.nifi.authorization.FileUserGroupProvider</class>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '        <property name="Users File">./persistent_conf/users.xml</property>' >> "$AUTHORIZERS_FILE"
-    printf '%s\n' '        <property name="Initial User Identity 1"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Initial User Identity 1">{{ .Values.global.ldap.initialAdminIdentity }}</property>' >> "$AUTHORIZERS_FILE"
+    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+    printf '%s\n' '        <property name="Initial User Identity {{ add $i 2 }}">CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
+    {{- end }}
     printf '%s\n' '    </userGroupProvider>' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '' >> "$AUTHORIZERS_FILE"
     printf '%s\n' '    <userGroupProvider>' >> "$AUTHORIZERS_FILE"
