@@ -106,11 +106,9 @@ data:
         mkdir -p "$PERSISTENT_CONF_DIR"
         
         # 1. Generate users.xml
-        cat > "$USERS_XML" <<EOF
-    <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <tenants>
-      <users>
-EOF
+        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
+        echo '<tenants>' >> "$USERS_XML"
+        echo '  <users>' >> "$USERS_XML"
         # Add Cluster Nodes
         for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
           NODE_DN="CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
@@ -129,16 +127,14 @@ EOF
         echo "    <user identifier=\"$ADMIN_UUID\" identity=\"$ADMIN_DN\"/>" >> "$USERS_XML"
         {{- end }}
         
-        echo "      </users>
-      <groups/>
-    </tenants>" >> "$USERS_XML"
+        echo '  </users>' >> "$USERS_XML"
+        echo '  <groups/>' >> "$USERS_XML"
+        echo '</tenants>' >> "$USERS_XML"
 
         # 2. Generate authorizations.xml
-        cat > "$AUTH_XML" <<EOF
-    <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-    <authorizations>
-      <policies>
-EOF
+        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$AUTH_XML"
+        echo '<authorizations>' >> "$AUTH_XML"
+        echo '  <policies>' >> "$AUTH_XML"
         # Get list of all admin UUIDs
         ALL_ADMIN_IDS="$INGRESS_UUID"
         for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
@@ -184,8 +180,8 @@ EOF
             fi
         fi
 
-        echo "      </policies>
-    </authorizations>" >> "$AUTH_XML"
+        echo '  </policies>' >> "$AUTH_XML"
+        echo '</authorizations>' >> "$AUTH_XML"
         echo "Security registry provisioned successfully."
     fi
 
