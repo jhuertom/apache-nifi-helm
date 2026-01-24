@@ -98,8 +98,7 @@ data:
       done
       results="${results}<property name=\"$role Node-Ingress\">CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
       
-      # Add LDAP Admin ONLY to Initial User Identity role (to seed it in users.xml)
-      # and Initial Admin Identity (handled separately)
+      # Seed LDAP Admin to Initial User Identity Role
       if [ "$role" == "Initial User Identity" ]; then
         {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
         results="${results}<property name=\"$role LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
@@ -275,85 +274,74 @@ data:
       --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
 
-    # AUTOMATED ROOT GROUP AND CLUSTER NODE AUTHORIZATION
-    # We background this process to ensure all nodes eventually agree on a set of core policies.
+    # Set Initial Admin Identity - NiFi will create policies on first start
+    # We include EVERY NODE as an initial admin to ensure they have replication rights.
+    ADMIN_LIST="{{ .Values.global.ldap.initialAdminIdentity }}"
+    for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
+      ADMIN_LIST="${ADMIN_LIST},CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+    done
+    ADMIN_LIST="${ADMIN_LIST},CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+
+    echo "Setting Initial Admin Identity List: $ADMIN_LIST"
+    xmlstarlet ed --inplace \
+      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
+      --value "$ADMIN_LIST" \
+      "${authorizers_file}"
+
+    # RE-ENABLE AUTOMATED PATCHER for Root Group ID
     (
-        LOG_FILE="/opt/nifi/nifi-current/logs/patcher.log"
-        echo "$(date): Background patcher started." >> "$LOG_FILE"
-        FLOW_FILE="${conf_dir}/{{ .Values.persistence.config.files.flowJson }}"
-        AUTH_XML="${conf_dir}/{{ .Values.persistence.config.files.authorizations }}"
-        USERS_XML="${conf_dir}/{{ .Values.persistence.config.files.users }}"
-        
-        # Deterministic UUID generation function
-        GET_DET_UUID() {
-            local seed="$1"
-            echo -n "$seed" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
-        }
-
-        # Wait up to 10 minutes for NiFi to initialize files
-        for i in {1..120}; do
-            if [ -f "$AUTH_XML" ] && [ -f "$USERS_XML" ]; then
-                echo "$(date): Registry files found. Patching..." >> "$LOG_FILE"
-                sleep 10 # Allow NiFi to stabilize
+        set +e # Don't exit on error in background
+        while true; do
+            AUTH_XML="${conf_dir}/{{ .Values.persistence.config.files.authorizations }}"
+            USERS_XML="${conf_dir}/{{ .Values.persistence.config.files.users }}"
+            FLOW_FILE="${conf_dir}/{{ .Values.persistence.config.files.flowJson }}"
+            
+            if [ -f "$AUTH_XML" ] && [ -f "$USERS_XML" ] && [ -f "$FLOW_FILE" ]; then
+                echo "[PATCHER] XML files found. Checking for Root Group policies..."
                 
-                # Get Admin UUID
-                ADMIN_ID=$(xmlstarlet sel -t -v "//user[@identity='{{ .Values.global.ldap.initialAdminIdentity }}']/@identifier" "$USERS_XML")
-                # Get Node UUIDs
-                NODE_IDS=$(xmlstarlet sel -t -v "//user[starts-with(@identity, 'CN=')]/@identifier" "$USERS_XML")
-                
-                if [ -z "$ADMIN_ID" ]; then
-                   echo "$(date): Could not find admin UUID, retrying..." >> "$LOG_FILE"
-                   sleep 5
-                   continue
-                fi
-
-                # Function to grant a list of identifiers to a resource deterministically
-                GRANT_ACCESS() {
-                    local RES=$1
-                    local ACT=$2
-                    local IDS=$3
-                    
-                    # Deterministic ID for this policy ensures all cluster nodes match
-                    local DET_ID=$(GET_DET_UUID "policy-$RES-$ACT")
-                    
-                    # Find existing policy by resource/action OR by our deterministic ID
-                    local PID=$(xmlstarlet sel -t -v "//policy[@resource='$RES' and @action='$ACT']/@identifier" "$AUTH_XML")
-                    
-                    if [ -z "$PID" ]; then
-                        echo "$(date): Creating policy $RES ($ACT) with ID $DET_ID" >> "$LOG_FILE"
-                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$DET_ID\" resource=\"$RES\">\n    </policy>" "$AUTH_XML"
-                        PID=$DET_ID
-                    fi
-                    
-                    for ID in $IDS; do
-                        if ! grep -q "user identifier=\"$ID\"" <<< "$(xmlstarlet sel -t -c "//policy[@identifier='$PID']" "$AUTH_XML")"; then
-                            sed -i "/identifier=\"$PID\"/a \      <user identifier=\"$ID\"/>" "$AUTH_XML"
-                        fi
-                    done
-                }
-                
-                # Get Root Group ID
                 ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
-                ALL_ADMINS="$ADMIN_ID $NODE_IDS"
-                
-                GRANT_ACCESS "/flow" "R" "$ALL_ADMINS"
-                GRANT_ACCESS "/flow" "W" "$ALL_ADMINS"
-                GRANT_ACCESS "/controller" "R" "$ALL_ADMINS"
-                GRANT_ACCESS "/controller" "W" "$ALL_ADMINS"
-                GRANT_ACCESS "/proxy" "W" "$ALL_ADMINS"
-                
-                if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
-                    echo "$(date): Patching Root Group $ROOT_GROUP_ID" >> "$LOG_FILE"
-                    GRANT_ACCESS "/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
-                    GRANT_ACCESS "/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
-                    GRANT_ACCESS "/data/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
-                    GRANT_ACCESS "/data/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
-                    GRANT_ACCESS "/operation/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
+                if [ -z "$ROOT_GROUP_ID" ] || [ "$ROOT_GROUP_ID" == "null" ]; then
+                    echo "[PATCHER] No Root Group found in flow yet. Waiting..."
+                    sleep 10
+                    continue
                 fi
-                echo "$(date): Authorization patching complete." >> "$LOG_FILE"
+                
+                # Check if we've already patched for this ID
+                if grep -q "$ROOT_GROUP_ID" "$AUTH_XML"; then
+                    echo "[PATCHER] Root Group $ROOT_GROUP_ID already authorized. Patching complete."
+                    break
+                fi
+                
+                echo "[PATCHER] Patching permissions for Root Group $ROOT_GROUP_ID..."
+                
+                # Get IDs for all admins
+                ALL_ADMIN_IDS=$(xmlstarlet sel -t -v "//user/@identifier" "$USERS_XML")
+                
+                for ACT in "R" "W"; do
+                    # Resource: /process-groups/$ROOT_GROUP_ID
+                    # Resource: /data/process-groups/$ROOT_GROUP_ID
+                    for RES_BASE in "/process-groups" "/data/process-groups"; do
+                        RES="${RES_BASE}/${ROOT_GROUP_ID}"
+                        DET_ID=$(echo -n "policy-${RES}-${ACT}" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/')
+                        
+                        # Add policy if missing
+                        if ! grep -q "resource=\"$RES\"" "$AUTH_XML"; then
+                            sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$DET_ID\" resource=\"$RES\">\n    </policy>" "$AUTH_XML"
+                        fi
+                        
+                        # Add all users current in the regsitry to this policy
+                        for UID in $ALL_ADMIN_IDS; do
+                            if ! xmlstarlet sel -t -c "//policy[@resource='$RES' and @action='$ACT']" "$AUTH_XML" | grep -q "$UID"; then
+                                sed -i "/resource=\"$RES\"/a \      <user identifier=\"$UID\"/>" "$AUTH_XML"
+                            fi
+                        done
+                    done
+                done
+                echo "[PATCHER] Successfully patched Root Group permissions."
                 break
             fi
-            sleep 5
+            echo "[PATCHER] Waiting for NiFi initialization..."
+            sleep 10
         done
     ) &
     
