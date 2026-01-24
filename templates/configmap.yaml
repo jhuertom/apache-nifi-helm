@@ -99,77 +99,61 @@ data:
       echo -n "$1" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
     }
 
-    # INITIAL REGISTRY PROVISIONING
-    # If users.xml is missing, we create a complete, synchronized state for the whole cluster.
-    if [ ! -f "$USERS_XML" ]; then
-        echo "Provisioning initial security registry..."
-        mkdir -p "$PERSISTENT_CONF_DIR"
-        
-        # Build user list
-        USER_DEFINITIONS=""
-        ALL_ADMIN_IDS=""
-        
-        ADD_USER() {
-            local DN="$1"
-            local UUID=$(GET_UUID "user-$DN")
-            USER_DEFINITIONS="${USER_DEFINITIONS}    <user identifier=\"$UUID\" identity=\"$DN\"/>\n"
-            ALL_ADMIN_IDS="${ALL_ADMIN_IDS} $UUID"
-        }
-
-        # Add Cluster Nodes
+        # BUILD IDENTITIES LIST
+        ADMIN_IDENTITIES=""
+        # NiFi Nodes
         for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-          ADD_USER "CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+            ADMIN_IDENTITIES="${ADMIN_IDENTITIES} CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
         done
-        # Add Ingress Node
-        ADD_USER "CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-        # Add LDAP Admin
+        # Ingress Node
+        ADMIN_IDENTITIES="${ADMIN_IDENTITIES} CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        # LDAP Admin
         {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-        ADD_USER "{{ .Values.global.ldap.initialAdminIdentity }}"
+        ADMIN_IDENTITIES="${ADMIN_IDENTITIES} {{ .Values.global.ldap.initialAdminIdentity }}"
         {{- end }}
 
+        echo "Identities to authorize:$ADMIN_IDENTITIES"
+
         # 1. Generate users.xml
-        # Using %b to expand \n into real newlines. No <groups/> tag as per NiFi 2.x schema if empty.
-        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<tenants>\n  <users>\n%b  </users>\n</tenants>\n' "$USER_DEFINITIONS" > "$USERS_XML"
+        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
+        echo '<tenants>' >> "$USERS_XML"
+        echo '  <users>' >> "$USERS_XML"
+        for DN in $ADMIN_IDENTITIES; do
+            UUID=$(GET_UUID "user-$DN")
+            echo "    <user identifier=\"$UUID\" identity=\"$DN\"/>" >> "$USERS_XML"
+        done
+        echo '  </users>' >> "$USERS_XML"
+        echo '</tenants>' >> "$USERS_XML"
 
         # 2. Generate authorizations.xml
-        POLICY_DEFINITIONS=""
-        ADD_POLICY() {
-            local RES="$1"
-            local ACT="$2"
-            local PID=$(GET_UUID "policy-$RES-$ACT")
-            local USERS_SNIPPET=""
-            for UID in $ALL_ADMIN_IDS; do
-                USERS_SNIPPET="${USERS_SNIPPET}      <user identifier=\"$UID\"/>\n"
-            done
-            POLICY_DEFINITIONS="${POLICY_DEFINITIONS}    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">\n${USERS_SNIPPET}    </policy>\n"
-        }
-
-        # Core policies
-        ADD_POLICY "/flow" "R"
-        ADD_POLICY "/flow" "W"
-        ADD_POLICY "/controller" "R"
-        ADD_POLICY "/controller" "W"
-        ADD_POLICY "/proxy" "W"
-        ADD_POLICY "/restricted-components" "W"
-        ADD_POLICY "/tenants" "R"
-        ADD_POLICY "/tenants" "W"
-        ADD_POLICY "/policies" "R"
-        ADD_POLICY "/policies" "W"
+        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$AUTH_XML"
+        echo '<authorizations>' >> "$AUTH_XML"
+        echo '  <policies>' >> "$AUTH_XML"
         
-        # Root Group - Safe check for flow file
+        RESOURCES="/flow /controller /proxy /restricted-components /tenants /policies"
+        # Access Root Group if exists
         if [ -s "$FLOW_FILE" ]; then
-            ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
-            if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
-                echo "Found Root Group $ROOT_GROUP_ID. Provisioning access..."
-                ADD_POLICY "/process-groups/$ROOT_GROUP_ID" "R"
-                ADD_POLICY "/process-groups/$ROOT_GROUP_ID" "W"
-                ADD_POLICY "/data/process-groups/$ROOT_GROUP_ID" "R"
-                ADD_POLICY "/data/process-groups/$ROOT_GROUP_ID" "W"
-                ADD_POLICY "/operation/process-groups/$ROOT_GROUP_ID" "W"
+            ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
+            if [ -n "$ROOT_ID" ] && [ "$ROOT_ID" != "null" ] && [ "$ROOT_ID" != "true" ]; then
+                RESOURCES="$RESOURCES /process-groups/$ROOT_ID /data/process-groups/$ROOT_ID /operation/process-groups/$ROOT_ID"
             fi
         fi
 
-        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<authorizations>\n  <policies>\n%b  </policies>\n</authorizations>\n' "$POLICY_DEFINITIONS" > "$AUTH_XML"
+        for RES in $RESOURCES; do
+            for ACT in R W; do
+                # Restricted components only needs W usually, but we grant R too for safety
+                PID=$(GET_UUID "policy-$RES-$ACT")
+                echo "    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">" >> "$AUTH_XML"
+                for DN in $ADMIN_IDENTITIES; do
+                    UID=$(GET_UUID "user-$DN")
+                    echo "      <user identifier=\"$UID\"/>" >> "$AUTH_XML"
+                done
+                echo "    </policy>" >> "$AUTH_XML"
+            done
+        done
+        echo '  </policies>' >> "$AUTH_XML"
+        echo '</authorizations>' >> "$AUTH_XML"
+        echo "Security registry provisioned successfully."
     fi
 
     echo "DEBUG: users.xml content:"
