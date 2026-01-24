@@ -122,17 +122,12 @@ data:
 
         # 1. Generate users.xml
         # We'll create a group called 'NiFi Administrators' and add everyone to it.
+        # CRITICAL: In NiFi 2.x, <groups> MUST come BEFORE <users> in the <tenants> element.
         GROUP_NAME="NiFi Administrators"
         GROUP_ID=$(GET_UUID "group-$GROUP_NAME")
 
         echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
         echo '<tenants>' >> "$USERS_XML"
-        echo '  <users>' >> "$USERS_XML"
-        for DN in $ADMIN_IDENTITIES; do
-            U_ID=$(GET_UUID "user-$DN")
-            echo "    <user identifier=\"$U_ID\" identity=\"$DN\"/>" >> "$USERS_XML"
-        done
-        echo '  </users>' >> "$USERS_XML"
         echo '  <groups>' >> "$USERS_XML"
         echo "    <group identifier=\"$GROUP_ID\" name=\"$GROUP_NAME\">" >> "$USERS_XML"
         for DN in $ADMIN_IDENTITIES; do
@@ -141,6 +136,12 @@ data:
         done
         echo '    </group>' >> "$USERS_XML"
         echo '  </groups>' >> "$USERS_XML"
+        echo '  <users>' >> "$USERS_XML"
+        for DN in $ADMIN_IDENTITIES; do
+            U_ID=$(GET_UUID "user-$DN")
+            echo "    <user identifier=\"$U_ID\" identity=\"$DN\"/>" >> "$USERS_XML"
+        done
+        echo '  </users>' >> "$USERS_XML"
         echo '</tenants>' >> "$USERS_XML"
 
         # 2. Generate authorizations.xml
