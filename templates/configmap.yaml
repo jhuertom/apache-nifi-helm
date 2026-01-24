@@ -489,7 +489,7 @@ data:
     {{- end }}
 
     exec $scripts_dir/start.sh
-  pre-stop.sh: |
+  custom-startup.sh: |
     #!/bin/bash
 
     # NiFi toolkit CLI path
