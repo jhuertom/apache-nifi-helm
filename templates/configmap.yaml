@@ -466,6 +466,119 @@ data:
             fi
         fi
     fi
+    
+    # ========== BACKGROUND POLICY MONITOR ==========
+    # This runs in the background and waits for NiFi to be ready, then checks
+    # for any process groups without policies and adds them automatically.
+    # This handles the case where NiFi creates a new ROOT_ID on first start.
+    (
+        echo "[PolicyMonitor] Starting background policy monitor..."
+        
+        # Wait for NiFi to be ready (up to 5 minutes)
+        MAX_WAIT=300
+        WAIT_INTERVAL=10
+        ELAPSED=0
+        
+        while [ $ELAPSED -lt $MAX_WAIT ]; do
+            # Check if NiFi is responding
+            if curl -sk "https://localhost:8443/nifi-api/system-diagnostics" >/dev/null 2>&1; then
+                echo "[PolicyMonitor] NiFi is ready after ${ELAPSED}s"
+                break
+            fi
+            sleep $WAIT_INTERVAL
+            ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+            echo "[PolicyMonitor] Waiting for NiFi... ${ELAPSED}s"
+        done
+        
+        if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "[PolicyMonitor] Timeout waiting for NiFi. Exiting."
+            exit 1
+        fi
+        
+        # Wait a bit more for flow to stabilize
+        sleep 30
+        
+        # Re-check flow.json.gz for ROOT_ID
+        if [ -s "$FLOW_FILE" ]; then
+            ROOT_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || true)
+            
+            if [ -n "$ROOT_ID" ] && [ "$ROOT_ID" != "null" ]; then
+                if ! grep -q "process-groups/$ROOT_ID" "$AUTH_XML" 2>/dev/null; then
+                    echo "[PolicyMonitor] Found new ROOT_ID: $ROOT_ID - Adding policies..."
+                    
+                    ADMIN_ID=$(GET_UUID "user-{{ .Values.global.ldap.initialAdminIdentity }}")
+                    INGRESS_DN="CN={{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+                    INGRESS_ID=$(GET_UUID "user-$INGRESS_DN")
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+                    NODE{{ $i }}_ID=$(GET_UUID "user-$NODE{{ $i }}_DN")
+                    {{- end }}
+                    
+                    # Create policies for ROOT_ID
+                    {
+                        P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-R")
+                        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">"
+                        echo "      <user identifier=\"$ADMIN_ID\"/>"
+                        echo "      <user identifier=\"$INGRESS_ID\"/>"
+                        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                        {{- end }}
+                        echo "    </policy>"
+                        
+                        P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-W")
+                        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">"
+                        echo "      <user identifier=\"$ADMIN_ID\"/>"
+                        echo "      <user identifier=\"$INGRESS_ID\"/>"
+                        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                        {{- end }}
+                        echo "    </policy>"
+                        
+                        P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")
+                        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/data/process-groups/$ROOT_ID\">"
+                        echo "      <user identifier=\"$ADMIN_ID\"/>"
+                        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                        {{- end }}
+                        echo "    </policy>"
+                        
+                        P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-W")
+                        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/data/process-groups/$ROOT_ID\">"
+                        echo "      <user identifier=\"$ADMIN_ID\"/>"
+                        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                        {{- end }}
+                        echo "    </policy>"
+                        
+                        P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")
+                        echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">"
+                        echo "      <user identifier=\"$ADMIN_ID\"/>"
+                        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                        {{- end }}
+                        echo "    </policy>"
+                        
+                        P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")
+                        echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">"
+                        echo "      <user identifier=\"$ADMIN_ID\"/>"
+                        {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                        echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                        {{- end }}
+                        echo "    </policy>"
+                    } > /tmp/monitor_policies.xml
+                    
+                    sed -i '/<\/policies>/e cat /tmp/monitor_policies.xml' "$AUTH_XML"
+                    rm -f /tmp/monitor_policies.xml
+                    echo "[PolicyMonitor] Policies added for ROOT_ID: $ROOT_ID"
+                    echo "[PolicyMonitor] NOTE: You may need to restart NiFi pods for policies to take effect."
+                else
+                    echo "[PolicyMonitor] Policies for ROOT_ID $ROOT_ID already exist."
+                fi
+            fi
+        fi
+        
+        echo "[PolicyMonitor] Policy monitor completed."
+    ) &
     {{- else }}
     # Non-LDAP mode: Create users.xml and authorizations.xml manually
     if [ ! -f "$USERS_XML" ]; then
