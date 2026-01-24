@@ -145,8 +145,8 @@ data:
                 PID=$(GET_UUID "policy-$RES-$ACT")
                 echo "    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">" >> "$AUTH_XML"
                 for DN in $ADMIN_IDENTITIES; do
-                    UID=$(GET_UUID "user-$DN")
-                    echo "      <user identifier=\"$UID\"/>" >> "$AUTH_XML"
+                    U_ID=$(GET_UUID "user-$DN")
+                    echo "      <user identifier=\"$U_ID\"/>" >> "$AUTH_XML"
                 done
                 echo "    </policy>" >> "$AUTH_XML"
             done
