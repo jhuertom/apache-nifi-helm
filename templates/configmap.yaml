@@ -271,16 +271,30 @@ data:
                 GROUP_ID=$(GET_UUID "group-NiFi Administrators")
                 
                 # Create temporary file with new policies
-                NEW_POLICIES=""
-                for RES in "/process-groups/$ROOT_ID" "/data/process-groups/$ROOT_ID" "/operation/process-groups/$ROOT_ID"; do
-                    for ACT in R W; do
-                        P_ID=$(GET_UUID "policy-$RES-$ACT")
-                        NEW_POLICIES="${NEW_POLICIES}    <policy action=\"$ACT\" identifier=\"$P_ID\" resource=\"$RES\">\n      <group identifier=\"$GROUP_ID\"/>\n    </policy>\n"
-                    done
-                done
+                cat > /tmp/new_policies.xml << EOFPOLICIES
+    <policy action="R" identifier="$(GET_UUID "policy-/process-groups/$ROOT_ID-R")" resource="/process-groups/$ROOT_ID">
+      <group identifier="$GROUP_ID"/>
+    </policy>
+    <policy action="W" identifier="$(GET_UUID "policy-/process-groups/$ROOT_ID-W")" resource="/process-groups/$ROOT_ID">
+      <group identifier="$GROUP_ID"/>
+    </policy>
+    <policy action="R" identifier="$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")" resource="/data/process-groups/$ROOT_ID">
+      <group identifier="$GROUP_ID"/>
+    </policy>
+    <policy action="W" identifier="$(GET_UUID "policy-/data/process-groups/$ROOT_ID-W")" resource="/data/process-groups/$ROOT_ID">
+      <group identifier="$GROUP_ID"/>
+    </policy>
+    <policy action="R" identifier="$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")" resource="/operation/process-groups/$ROOT_ID">
+      <group identifier="$GROUP_ID"/>
+    </policy>
+    <policy action="W" identifier="$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")" resource="/operation/process-groups/$ROOT_ID">
+      <group identifier="$GROUP_ID"/>
+    </policy>
+EOFPOLICIES
                 
-                # Insert before </policies>
-                sed -i "s|</policies>|${NEW_POLICIES}</policies>|" "$AUTH_XML"
+                # Insert before </policies> using sed with file read
+                sed -i '/<\/policies>/e cat /tmp/new_policies.xml' "$AUTH_XML"
+                rm -f /tmp/new_policies.xml
                 echo "Root group policies added successfully."
             else
                 echo "Root group policies already exist for ROOT_ID: $ROOT_ID"
