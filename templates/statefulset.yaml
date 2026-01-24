@@ -136,7 +136,7 @@ spec:
         - name: {{ .Chart.Name }}
           image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: [ "../scripts/k8s/custom-startup.sh" ]
+          command: [ "/opt/nifi/scripts/k8s/custom-startup.sh" ]
           lifecycle:
             preStop:
               exec:
