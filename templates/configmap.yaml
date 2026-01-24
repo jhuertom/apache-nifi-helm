@@ -142,97 +142,82 @@ data:
     echo "Creating clean authorizers.xml for LDAP-only authentication..."
     
     AUTHORIZERS_FILE='conf/authorizers.xml'
-    cat > "$AUTHORIZERS_FILE" << 'AUTHEOF'
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<authorizers>
-    <userGroupProvider>
-        <identifier>file-user-group-provider</identifier>
-        <class>org.apache.nifi.authorization.FileUserGroupProvider</class>
-        <property name="Users File">./persistent_conf/users.xml</property>
-        <property name="Initial User Identity 1"></property>
-    </userGroupProvider>
-
-    <userGroupProvider>
-        <identifier>ldap-user-group-provider</identifier>
-        <class>org.apache.nifi.ldap.tenants.LdapUserGroupProvider</class>
-        <property name="Authentication Strategy">__LDAP_AUTH_STRATEGY__</property>
-        <property name="Manager DN">__LDAP_MANAGER_DN__</property>
-        <property name="Manager Password">__LDAP_MANAGER_PASSWORD__</property>
-        <property name="TLS - Keystore"></property>
-        <property name="TLS - Keystore Password"></property>
-        <property name="TLS - Keystore Type"></property>
-        <property name="TLS - Truststore"></property>
-        <property name="TLS - Truststore Password"></property>
-        <property name="TLS - Truststore Type"></property>
-        <property name="TLS - Client Auth"></property>
-        <property name="TLS - Protocol">TLSv1.2</property>
-        <property name="TLS - Shutdown Gracefully"></property>
-        <property name="Referral Strategy">FOLLOW</property>
-        <property name="Connect Timeout">10 secs</property>
-        <property name="Read Timeout">10 secs</property>
-        <property name="Url">__LDAP_URL__</property>
-        <property name="Page Size"></property>
-        <property name="Sync Interval">30 mins</property>
-        <property name="Group Membership - Enforce Case Sensitivity">false</property>
-        <property name="User Search Base">__LDAP_USER_SEARCH_BASE__</property>
-        <property name="User Object Class">person</property>
-        <property name="User Search Scope">ONE_LEVEL</property>
-        <property name="User Search Filter">__LDAP_USER_SEARCH_FILTER__</property>
-        <property name="User Identity Attribute">uid</property>
-        <property name="User Group Name Attribute"></property>
-        <property name="User Group Name Attribute - Referenced Group Attribute"></property>
-        <property name="Group Search Base"></property>
-        <property name="Group Object Class">group</property>
-        <property name="Group Search Scope">ONE_LEVEL</property>
-        <property name="Group Search Filter"></property>
-        <property name="Group Name Attribute"></property>
-        <property name="Group Member Attribute"></property>
-        <property name="Group Member Attribute - Referenced User Attribute"></property>
-    </userGroupProvider>
-
-    <userGroupProvider>
-        <identifier>composite-configurable-user-group-provider</identifier>
-        <class>org.apache.nifi.authorization.CompositeConfigurableUserGroupProvider</class>
-        <property name="Configurable User Group Provider">file-user-group-provider</property>
-        <property name="User Group Provider 1">ldap-user-group-provider</property>
-    </userGroupProvider>
-
-    <accessPolicyProvider>
-        <identifier>file-access-policy-provider</identifier>
-        <class>org.apache.nifi.authorization.FileAccessPolicyProvider</class>
-        <property name="User Group Provider">composite-configurable-user-group-provider</property>
-        <property name="Authorizations File">./persistent_conf/authorizations.xml</property>
-        <property name="Initial Admin Identity">__INITIAL_ADMIN_IDENTITY__</property>
-        <property name="Node Identity 1">__NODE_IDENTITY_1__</property>
-        <property name="Node Identity 2">__NODE_IDENTITY_2__</property>
-        <property name="Node Identity 3">__NODE_IDENTITY_3__</property>
-    </accessPolicyProvider>
-
-    <authorizer>
-        <identifier>managed-authorizer</identifier>
-        <class>org.apache.nifi.authorization.StandardManagedAuthorizer</class>
-        <property name="Access Policy Provider">file-access-policy-provider</property>
-    </authorizer>
-</authorizers>
-AUTHEOF
-
-    # Replace placeholders with actual values
-    sed -i "s|__LDAP_AUTH_STRATEGY__|{{ .Values.global.ldap.authenticationStrategy }}|g" "$AUTHORIZERS_FILE"
-    sed -i "s|__LDAP_MANAGER_DN__|{{ .Values.global.ldap.manager.distinguishedName }}|g" "$AUTHORIZERS_FILE"
-    sed -i "s|__LDAP_MANAGER_PASSWORD__|${LDAP_MANAGER_PASSWORD}|g" "$AUTHORIZERS_FILE"
-    sed -i "s|__LDAP_URL__|{{ .Values.global.ldap.url }}|g" "$AUTHORIZERS_FILE"
-    sed -i "s|__LDAP_USER_SEARCH_BASE__|{{ .Values.global.ldap.userSearchBase }}|g" "$AUTHORIZERS_FILE"
-    sed -i "s|__LDAP_USER_SEARCH_FILTER__|{{ .Values.global.ldap.userSearchFilter }}|g" "$AUTHORIZERS_FILE"
-    sed -i "s|__INITIAL_ADMIN_IDENTITY__|{{ .Values.global.ldap.initialAdminIdentity }}|g" "$AUTHORIZERS_FILE"
     
-    # Set Node Identities
+    # Build authorizers.xml using printf to avoid YAML parsing issues with XML declarations
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' > "$AUTHORIZERS_FILE"
+    printf '%s\n' '<authorizers>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    <userGroupProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <identifier>file-user-group-provider</identifier>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <class>org.apache.nifi.authorization.FileUserGroupProvider</class>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Users File">./persistent_conf/users.xml</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Initial User Identity 1"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    </userGroupProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    <userGroupProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <identifier>ldap-user-group-provider</identifier>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <class>org.apache.nifi.ldap.tenants.LdapUserGroupProvider</class>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Authentication Strategy">{{ .Values.global.ldap.authenticationStrategy }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Manager DN">{{ .Values.global.ldap.manager.distinguishedName }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' "        <property name=\"Manager Password\">\${LDAP_MANAGER_PASSWORD}</property>" >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Keystore"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Keystore Password"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Keystore Type"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Truststore"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Truststore Password"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Truststore Type"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Client Auth"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Protocol">TLSv1.2</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="TLS - Shutdown Gracefully"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Referral Strategy">FOLLOW</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Connect Timeout">10 secs</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Read Timeout">10 secs</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Url">{{ .Values.global.ldap.url }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Page Size"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Sync Interval">30 mins</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Membership - Enforce Case Sensitivity">false</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Search Base">{{ .Values.global.ldap.userSearchBase }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Object Class">person</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Search Scope">ONE_LEVEL</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Search Filter">{{ .Values.global.ldap.userSearchFilter }}</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Identity Attribute">uid</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Group Name Attribute"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Group Name Attribute - Referenced Group Attribute"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Search Base"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Object Class">group</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Search Scope">ONE_LEVEL</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Search Filter"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Name Attribute"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Member Attribute"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Group Member Attribute - Referenced User Attribute"></property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    </userGroupProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    <userGroupProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <identifier>composite-configurable-user-group-provider</identifier>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <class>org.apache.nifi.authorization.CompositeConfigurableUserGroupProvider</class>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Configurable User Group Provider">file-user-group-provider</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Group Provider 1">ldap-user-group-provider</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    </userGroupProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    <accessPolicyProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <identifier>file-access-policy-provider</identifier>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <class>org.apache.nifi.authorization.FileAccessPolicyProvider</class>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="User Group Provider">composite-configurable-user-group-provider</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Authorizations File">./persistent_conf/authorizations.xml</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Initial Admin Identity">{{ .Values.global.ldap.initialAdminIdentity }}</property>' >> "$AUTHORIZERS_FILE"
     {{- range $i := until (int .Values.global.nifi.nodeCount) }}
-    NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
-    sed -i "s|__NODE_IDENTITY_{{ add $i 1 }}__|${NODE{{ $i }}_DN}|g" "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Node Identity {{ add $i 1 }}">CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}</property>' >> "$AUTHORIZERS_FILE"
     {{- end }}
+    printf '%s\n' '    </accessPolicyProvider>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    <authorizer>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <identifier>managed-authorizer</identifier>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <class>org.apache.nifi.authorization.StandardManagedAuthorizer</class>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '        <property name="Access Policy Provider">file-access-policy-provider</property>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '    </authorizer>' >> "$AUTHORIZERS_FILE"
+    printf '%s\n' '</authorizers>' >> "$AUTHORIZERS_FILE"
     
-    # Remove unused Node Identity placeholders (if nodeCount < 3)
-    sed -i '/__NODE_IDENTITY_/d' "$AUTHORIZERS_FILE"
+    # Replace the password placeholder with actual value
+    sed -i "s|\${LDAP_MANAGER_PASSWORD}|${LDAP_MANAGER_PASSWORD}|g" "$AUTHORIZERS_FILE"
     
     echo "authorizers.xml created with LDAP-only configuration (no single-user-authorizer)."
     echo "LDAP authentication configured."
