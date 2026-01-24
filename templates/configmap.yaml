@@ -275,17 +275,11 @@ data:
       "${authorizers_file}"
 
     # Set Initial Admin Identity - NiFi will create policies on first start
-    # We include EVERY NODE as an initial admin to ensure they have replication rights.
-    ADMIN_LIST="{{ .Values.global.ldap.initialAdminIdentity }}"
-    for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-      ADMIN_LIST="${ADMIN_LIST},CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-    done
-    ADMIN_LIST="${ADMIN_LIST},CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-
-    echo "Setting Initial Admin Identity List: $ADMIN_LIST"
+    # IMPORTANT: NiFi only supports a SINGLE identity here.
+    echo "Setting Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value "$ADMIN_LIST" \
+      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
 
     # RE-ENABLE AUTOMATED PATCHER for Root Group ID
