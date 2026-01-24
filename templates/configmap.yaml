@@ -128,7 +128,8 @@ data:
         {{- end }}
 
         # 1. Generate users.xml
-        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<tenants>\n  <users>\n%b  </users>\n  <groups/>\n</tenants>\n' "$USER_DEFINITIONS" > "$USERS_XML"
+        # Note: NiFi 2.x schema for tenants usually doesn't include an empty <groups/> tag if no groups exist.
+        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<tenants>\n  <users>\n%s  </users>\n</tenants>\n' "$USER_DEFINITIONS" > "$USERS_XML"
 
         # 2. Generate authorizations.xml
         POLICY_DEFINITIONS=""
@@ -136,11 +137,12 @@ data:
             local RES="$1"
             local ACT="$2"
             local PID=$(GET_UUID "policy-$RES-$ACT")
-            local USERS_XML_SNIPPET=""
+            local USERS_SNIPPET=""
+            # Using a sub-loop to build users for this policy
             for UID in $ALL_ADMIN_IDS; do
-                USERS_XML_SNIPPET="${USERS_XML_SNIPPET}      <user identifier=\"$UID\"/>\n"
+                USERS_SNIPPET="${USERS_SNIPPET}      <user identifier=\"$UID\"/>\n"
             done
-            POLICY_DEFINITIONS="${POLICY_DEFINITIONS}    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">\n${USERS_XML_SNIPPET}    </policy>\n"
+            POLICY_DEFINITIONS="${POLICY_DEFINITIONS}    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">\n${USERS_SNIPPET}    </policy>\n"
         }
 
         # Core policies
@@ -168,7 +170,7 @@ data:
             fi
         fi
 
-        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<authorizations>\n  <policies>\n%b  </policies>\n</authorizations>\n' "$POLICY_DEFINITIONS" > "$AUTH_XML"
+        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<authorizations>\n  <policies>\n%s  </policies>\n</authorizations>\n' "$POLICY_DEFINITIONS" > "$AUTH_XML"
         echo "Security registry provisioned successfully."
     fi
 
