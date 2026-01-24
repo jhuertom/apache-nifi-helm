@@ -170,12 +170,13 @@ data:
         fi
 
         printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<authorizations>\n  <policies>\n%b  </policies>\n</authorizations>\n' "$POLICY_DEFINITIONS" > "$AUTH_XML"
-        echo "Security registry provisioned successfully."
-        echo "DEBUG: users.xml content:"
-        cat "$USERS_XML"
-        echo "DEBUG: authorizations.xml content:"
-        cat "$AUTH_XML"
     fi
+
+    echo "DEBUG: users.xml content:"
+    [ -f "$USERS_XML" ] && cat "$USERS_XML" || echo "users.xml NOT FOUND"
+    echo "DEBUG: authorizations.xml content:"
+    [ -f "$AUTH_XML" ] && cat "$AUTH_XML" || echo "authorizations.xml NOT FOUND"
+    echo "DEBUG: Finished registry print."
 
     # Update authorizers.xml paths to point to persistent files
     conf_dir='/opt/nifi/nifi-current/persistent_conf'
