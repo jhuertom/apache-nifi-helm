@@ -105,82 +105,70 @@ data:
         echo "Provisioning initial security registry..."
         mkdir -p "$PERSISTENT_CONF_DIR"
         
-        # 1. Generate users.xml
-        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$USERS_XML"
-        echo '<tenants>' >> "$USERS_XML"
-        echo '  <users>' >> "$USERS_XML"
-        # Add Cluster Nodes
-        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-          NODE_DN="CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-          NODE_UUID=$(GET_UUID "user-$NODE_DN")
-          echo "    <user identifier=\"$NODE_UUID\" identity=\"$NODE_DN\"/>" >> "$USERS_XML"
-        done
-        # Add Ingress Node
-        INGRESS_DN="CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
-        INGRESS_UUID=$(GET_UUID "user-$INGRESS_DN")
-        echo "    <user identifier=\"$INGRESS_UUID\" identity=\"$INGRESS_DN\"/>" >> "$USERS_XML"
+        # Build user list
+        USER_DEFINITIONS=""
+        ALL_ADMIN_IDS=""
         
-        # Add LDAP Admin
-        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
-        ADMIN_DN="{{ .Values.global.ldap.initialAdminIdentity }}"
-        ADMIN_UUID=$(GET_UUID "user-$ADMIN_DN")
-        echo "    <user identifier=\"$ADMIN_UUID\" identity=\"$ADMIN_DN\"/>" >> "$USERS_XML"
-        {{- end }}
-        
-        echo '  </users>' >> "$USERS_XML"
-        echo '</tenants>' >> "$USERS_XML"
-
-        # 2. Generate authorizations.xml
-        echo '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' > "$AUTH_XML"
-        echo '<authorizations>' >> "$AUTH_XML"
-        echo '  <policies>' >> "$AUTH_XML"
-        # Get list of all admin UUIDs
-        ALL_ADMIN_IDS="$INGRESS_UUID"
-        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
-          ALL_ADMIN_IDS="$ALL_ADMIN_IDS $(GET_UUID "user-CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}")"
-        done
-        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
-        ALL_ADMIN_IDS="$ALL_ADMIN_IDS $ADMIN_UUID"
-        {{- end }}
-
-        GRANT_POLICY() {
-            local RES=$1
-            local ACT=$2
-            local PID=$(GET_UUID "policy-$RES-$ACT")
-            echo "    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">" >> "$AUTH_XML"
-            for UID in $ALL_ADMIN_IDS; do
-                echo "      <user identifier=\"$UID\"/>" >> "$AUTH_XML"
-            done
-            echo "    </policy>" >> "$AUTH_XML"
+        ADD_USER() {
+            local DN="$1"
+            local UUID=$(GET_UUID "user-$DN")
+            USER_DEFINITIONS="${USER_DEFINITIONS}    <user identifier=\"$UUID\" identity=\"$DN\"/>\n"
+            ALL_ADMIN_IDS="${ALL_ADMIN_IDS} $UUID"
         }
 
-        # Core policies required for UI and replication
-        GRANT_POLICY "/flow" "R"
-        GRANT_POLICY "/flow" "W"
-        GRANT_POLICY "/controller" "R"
-        GRANT_POLICY "/controller" "W"
-        GRANT_POLICY "/proxy" "W"
-        GRANT_POLICY "/restricted-components" "W"
-        GRANT_POLICY "/tenants" "R"
-        GRANT_POLICY "/tenants" "W"
-        GRANT_POLICY "/policies" "R"
-        GRANT_POLICY "/policies" "W"
+        # Add Cluster Nodes
+        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
+          ADD_USER "CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        done
+        # Add Ingress Node
+        ADD_USER "CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}"
+        # Add LDAP Admin
+        {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
+        ADD_USER "{{ .Values.global.ldap.initialAdminIdentity }}"
+        {{- end }}
+
+        # 1. Generate users.xml
+        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<tenants>\n  <users>\n%b  </users>\n  <groups/>\n</tenants>\n' "$USER_DEFINITIONS" > "$USERS_XML"
+
+        # 2. Generate authorizations.xml
+        POLICY_DEFINITIONS=""
+        ADD_POLICY() {
+            local RES="$1"
+            local ACT="$2"
+            local PID=$(GET_UUID "policy-$RES-$ACT")
+            local USERS_XML_SNIPPET=""
+            for UID in $ALL_ADMIN_IDS; do
+                USERS_XML_SNIPPET="${USERS_XML_SNIPPET}      <user identifier=\"$UID\"/>\n"
+            done
+            POLICY_DEFINITIONS="${POLICY_DEFINITIONS}    <policy action=\"$ACT\" identifier=\"$PID\" resource=\"$RES\">\n${USERS_XML_SNIPPET}    </policy>\n"
+        }
+
+        # Core policies
+        ADD_POLICY "/flow" "R"
+        ADD_POLICY "/flow" "W"
+        ADD_POLICY "/controller" "R"
+        ADD_POLICY "/controller" "W"
+        ADD_POLICY "/proxy" "W"
+        ADD_POLICY "/restricted-components" "W"
+        ADD_POLICY "/tenants" "R"
+        ADD_POLICY "/tenants" "W"
+        ADD_POLICY "/policies" "R"
+        ADD_POLICY "/policies" "W"
         
-        # Detect Root Process Group from existing flow
+        # Root Group
         if [ -f "$FLOW_FILE" ]; then
             ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
             if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
-                echo "Found Root Group $ROOT_GROUP_ID. Granting access..."
-                GRANT_POLICY "/process-groups/$ROOT_GROUP_ID" "R"
-                GRANT_POLICY "/process-groups/$ROOT_GROUP_ID" "W"
-                GRANT_POLICY "/data/process-groups/$ROOT_GROUP_ID" "R"
-                GRANT_POLICY "/data/process-groups/$ROOT_GROUP_ID" "W"
-                GRANT_POLICY "/operation/process-groups/$ROOT_GROUP_ID" "W"
+                echo "Found Root Group $ROOT_GROUP_ID. Provisioning access..."
+                ADD_POLICY "/process-groups/$ROOT_GROUP_ID" "R"
+                ADD_POLICY "/process-groups/$ROOT_GROUP_ID" "W"
+                ADD_POLICY "/data/process-groups/$ROOT_GROUP_ID" "R"
+                ADD_POLICY "/data/process-groups/$ROOT_GROUP_ID" "W"
+                ADD_POLICY "/operation/process-groups/$ROOT_GROUP_ID" "W"
             fi
         fi
 
-        echo '  </policies>' >> "$AUTH_XML"
-        echo '</authorizations>' >> "$AUTH_XML"
+        printf '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<authorizations>\n  <policies>\n%b  </policies>\n</authorizations>\n' "$POLICY_DEFINITIONS" > "$AUTH_XML"
         echo "Security registry provisioned successfully."
     fi
 
