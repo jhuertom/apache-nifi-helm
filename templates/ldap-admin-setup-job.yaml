@@ -50,13 +50,21 @@ spec:
               sed -n 's/.*identifier="\([^"]*\)".*/\1/p' | head -1)
             
             echo "User UUID: $USER_ID"
+            
+            # Get Root Process Group UUID (using kubectl from Job pod)
+            ROOT_GROUP_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+              sh -c "zcat /opt/nifi/nifi-current/persistent_conf/flow.json.gz | jq -r .rootGroup.identifier")
+            
+            echo "Root Group ID: $ROOT_GROUP_ID"
               
             if [ -n "$USER_ID" ]; then
               echo "Adding admin policies for user $USER_ID..."
                 
                 # Create script to add policies
                 kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
+                kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
                   USER_ID='$USER_ID'
+                  ROOT_GROUP_ID='$ROOT_GROUP_ID'
                   AUTH_FILE='/opt/nifi/nifi-current/persistent_conf/authorizations.xml'
                   
                   # Backup original file
@@ -93,11 +101,8 @@ spec:
                   add_user_to_policy '/tenants' 'W'
                   add_user_to_policy '/restricted-components' 'W'
                   add_user_to_policy '/provenance' 'R'
-                  # Get Root Process Group UUID
-                  ROOT_GROUP_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
-                    sh -c "zcat /opt/nifi/nifi-current/persistent_conf/flow.json.gz | jq -r .rootGroup.identifier")
-                  
-                  echo "Root Group ID: $ROOT_GROUP_ID"
+                  # Root Process Group UUID passed from Job pod
+                  # ROOT_GROUP_ID already set
                   
                   if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
                     add_user_to_policy "/process-groups/$ROOT_GROUP_ID" 'R'
