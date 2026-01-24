@@ -103,9 +103,9 @@ data:
     list_identities 'Initial User Identity'
 
     {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
-    # Add LDAP admin as Initial User Identity in file provider
-    echo "Adding LDAP admin as Initial User Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
-    sed -i -E "s|(<property name=\"Initial User Identity 1\">.*</property>)|\1\n<property name=\"Initial User Identity Admin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>|g" "${authorizers_file}"
+    # We do NOT add the LDAP admin as Initial User Identity in file provider anymore.
+    # We let the ldap-user-group-provider handle the user identity (generating a UUID based on the username).
+    # The ldap-admin-setup Job will calculate this UUID and assign policies to it.
     {{- end }}
 
     {{- /* Configure authorizers.xml for LDAP authentication */}}

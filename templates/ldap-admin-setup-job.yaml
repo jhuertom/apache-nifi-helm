@@ -36,32 +36,36 @@ spec:
           
           echo "NiFi is ready. Setting up LDAP admin {{ .Values.global.ldap.initialAdminIdentity }}..."
           
-          # Check if user exists
-          if kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
-            grep -q "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
-            /opt/nifi/nifi-current/persistent_conf/users.xml 2>/dev/null; then
+          echo "NiFi is ready. Calculating UUID for LDAP admin {{ .Values.global.ldap.initialAdminIdentity }}..."
+          
+          # Install python3 to calculate UUID
+          apk add --no-cache python3
+          
+          # Calculate Java-compatible UUID v3 (nameUUIDFromBytes)
+          # This matches how NiFi generates UUIDs for LDAP users
+          USER_ID=$(python3 -c "import hashlib, uuid, sys;
+name = sys.argv[1].encode('utf-8');
+md5 = hashlib.md5(name).digest();
+md5_bytes = bytearray(md5);
+md5_bytes[6] &= 0x0f;
+md5_bytes[6] |= 0x30;
+md5_bytes[8] &= 0x3f;
+md5_bytes[8] |= 0x80;
+print(str(uuid.UUID(bytes=bytes(md5_bytes))))" "{{ .Values.global.ldap.initialAdminIdentity }}")
+          
+          echo "Calculated LDAP User UUID: $USER_ID"
             
-            echo "User {{ .Values.global.ldap.initialAdminIdentity }} found in users.xml"
+          # Get Root Process Group UUID (using kubectl from Job pod)
+          ROOT_GROUP_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+            sh -c "zcat /opt/nifi/nifi-current/persistent_conf/flow.json.gz | jq -r .rootGroup.identifier")
+          
+          echo "Root Group ID: $ROOT_GROUP_ID"
             
-            # Get the user UUID
-            USER_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
-              grep "identity=\"{{ .Values.global.ldap.initialAdminIdentity }}\"" \
-              /opt/nifi/nifi-current/persistent_conf/users.xml | \
-              sed -n 's/.*identifier="\([^"]*\)".*/\1/p' | head -1)
-            
-            echo "User UUID: $USER_ID"
-            
-            # Get Root Process Group UUID (using kubectl from Job pod)
-            ROOT_GROUP_ID=$(kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
-              sh -c "zcat /opt/nifi/nifi-current/persistent_conf/flow.json.gz | jq -r .rootGroup.identifier")
-            
-            echo "Root Group ID: $ROOT_GROUP_ID"
+          if [ -n "$USER_ID" ]; then
+            echo "Adding admin policies for user $USER_ID..."
               
-            if [ -n "$USER_ID" ]; then
-              echo "Adding admin policies for user $USER_ID..."
-                
-                # Create script to add policies
-                kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
+              # Create script to add policies
+              kubectl exec {{ include "nifi.fullname" . }}-0 -n {{ .Release.Namespace }} -- bash -c "
                   USER_ID='$USER_ID'
                   ROOT_GROUP_ID='$ROOT_GROUP_ID'
                   AUTH_FILE='/opt/nifi/nifi-current/persistent_conf/authorizations.xml'
@@ -136,9 +140,8 @@ spec:
               echo "ERROR: Could not find user UUID"
               exit 1
             fi
-          else
-            echo "ERROR: User {{ .Values.global.ldap.initialAdminIdentity }} not found in users.xml"
-            echo "Please ensure the user is configured in authorizers.xml"
-            exit 1
-          fi
+            else
+              echo "ERROR: Could not calculate user UUID or Root Group ID"
+              exit 1
+            fi
 {{- end }}
