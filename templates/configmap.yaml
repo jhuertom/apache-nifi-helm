@@ -645,5 +645,4 @@ data:
     {{- toYaml .output.parameters | nindent 6 }}
     queue.mem:
       flush.timeout: {{ .queue.flushTimeout }}
-{{- end }}
-{{- end }}
+
