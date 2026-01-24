@@ -276,36 +276,53 @@ data:
       "${authorizers_file}"
 
     # AUTOMATED ROOT GROUP AND CLUSTER NODE AUTHORIZATION
-    # We background this process because on the first bootstrap, NiFi creates these files AFTER this script starts.
+    # We background this process to ensure all nodes eventually agree on a set of core policies.
     (
-        echo "Background patcher started. Waiting for NiFi to initialize XML files..."
+        LOG_FILE="/opt/nifi/nifi-current/logs/patcher.log"
+        echo "$(date): Background patcher started." >> "$LOG_FILE"
         FLOW_FILE="${conf_dir}/{{ .Values.persistence.config.files.flowJson }}"
         AUTH_XML="${conf_dir}/{{ .Values.persistence.config.files.authorizations }}"
         USERS_XML="${conf_dir}/{{ .Values.persistence.config.files.users }}"
         
-        # Wait up to 5 minutes for files to appear
-        for i in {1..60}; do
+        # Deterministic UUID generation function
+        GET_DET_UUID() {
+            local seed="$1"
+            echo -n "$seed" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
+        }
+
+        # Wait up to 10 minutes for NiFi to initialize files
+        for i in {1..120}; do
             if [ -f "$AUTH_XML" ] && [ -f "$USERS_XML" ]; then
-                echo "Files found. Patching authorizations for cluster replication..."
-                sleep 5 # Wait a bit more for NiFi to finish writing
+                echo "$(date): Registry files found. Patching..." >> "$LOG_FILE"
+                sleep 10 # Allow NiFi to stabilize
                 
                 # Get Admin UUID
                 ADMIN_ID=$(xmlstarlet sel -t -v "//user[@identity='{{ .Values.global.ldap.initialAdminIdentity }}']/@identifier" "$USERS_XML")
-                
                 # Get Node UUIDs
                 NODE_IDS=$(xmlstarlet sel -t -v "//user[starts-with(@identity, 'CN=')]/@identifier" "$USERS_XML")
                 
-                # Function to grant a list of identifiers to a resource
+                if [ -z "$ADMIN_ID" ]; then
+                   echo "$(date): Could not find admin UUID, retrying..." >> "$LOG_FILE"
+                   sleep 5
+                   continue
+                fi
+
+                # Function to grant a list of identifiers to a resource deterministically
                 GRANT_ACCESS() {
                     local RES=$1
                     local ACT=$2
                     local IDS=$3
+                    
+                    # Deterministic ID for this policy ensures all cluster nodes match
+                    local DET_ID=$(GET_DET_UUID "policy-$RES-$ACT")
+                    
+                    # Find existing policy by resource/action OR by our deterministic ID
                     local PID=$(xmlstarlet sel -t -v "//policy[@resource='$RES' and @action='$ACT']/@identifier" "$AUTH_XML")
                     
                     if [ -z "$PID" ]; then
-                        local NEW_ID=$(cat /proc/sys/kernel/random/uuid)
-                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$NEW_ID\" resource=\"$RES\">\n    </policy>" "$AUTH_XML"
-                        PID=$NEW_ID
+                        echo "$(date): Creating policy $RES ($ACT) with ID $DET_ID" >> "$LOG_FILE"
+                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$DET_ID\" resource=\"$RES\">\n    </policy>" "$AUTH_XML"
+                        PID=$DET_ID
                     fi
                     
                     for ID in $IDS; do
@@ -315,23 +332,25 @@ data:
                     done
                 }
                 
-                # Get Root Group ID from flow
+                # Get Root Group ID
                 ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
-                
-                # CORE PERMISSIONS FOR ADMIN + ALL NODES
                 ALL_ADMINS="$ADMIN_ID $NODE_IDS"
                 
                 GRANT_ACCESS "/flow" "R" "$ALL_ADMINS"
                 GRANT_ACCESS "/flow" "W" "$ALL_ADMINS"
+                GRANT_ACCESS "/controller" "R" "$ALL_ADMINS"
+                GRANT_ACCESS "/controller" "W" "$ALL_ADMINS"
+                GRANT_ACCESS "/proxy" "W" "$ALL_ADMINS"
                 
                 if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
+                    echo "$(date): Patching Root Group $ROOT_GROUP_ID" >> "$LOG_FILE"
                     GRANT_ACCESS "/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
                     GRANT_ACCESS "/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
                     GRANT_ACCESS "/data/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
                     GRANT_ACCESS "/data/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
                     GRANT_ACCESS "/operation/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
                 fi
-                echo "Root Group and Cluster Node policies verified background."
+                echo "$(date): Authorization patching complete." >> "$LOG_FILE"
                 break
             fi
             sleep 5
