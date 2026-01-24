@@ -69,78 +69,68 @@ data:
     export SINGLE_USER_CREDENTIALS_USERNAME=""
     export SINGLE_USER_CREDENTIALS_PASSWORD=""
     
-    # Remove single-user-provider from login-identity-providers.xml
-    xmlstarlet ed --inplace -d "//provider[identifier='single-user-provider']" 'conf/login-identity-providers.xml'
+    # CRITICAL: Create a clean login-identity-providers.xml with only ldap-provider
+    # The original file has commented sections that cause duplicate provider issues
+    echo "Creating clean login-identity-providers.xml for LDAP..."
+    cat > 'conf/login-identity-providers.xml' << 'LDAP_LOGIN_EOF'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<loginIdentityProviders>
+    <provider>
+        <identifier>ldap-provider</identifier>
+        <class>org.apache.nifi.ldap.LdapProvider</class>
+        <property name="Authentication Strategy">{{ .Values.global.ldap.authenticationStrategy }}</property>
+        <property name="Manager DN">{{ .Values.global.ldap.manager.distinguishedName }}</property>
+        <property name="Manager Password">LDAP_MANAGER_PASSWORD_PLACEHOLDER</property>
+        <property name="TLS - Keystore"></property>
+        <property name="TLS - Keystore Password"></property>
+        <property name="TLS - Keystore Type"></property>
+        <property name="TLS - Truststore"></property>
+        <property name="TLS - Truststore Password"></property>
+        <property name="TLS - Truststore Type"></property>
+        <property name="TLS - Client Auth"></property>
+        <property name="TLS - Protocol">{{ .Values.global.ldap.tlsProtocol }}</property>
+        <property name="TLS - Shutdown Gracefully"></property>
+        <property name="Referral Strategy">FOLLOW</property>
+        <property name="Connect Timeout">10 secs</property>
+        <property name="Read Timeout">10 secs</property>
+        <property name="Url">{{ .Values.global.ldap.url }}</property>
+        <property name="User Search Base">{{ .Values.global.ldap.userSearchBase }}</property>
+        <property name="User Search Filter">{{ .Values.global.ldap.userSearchFilter }}</property>
+        <property name="Identity Strategy">{{ .Values.global.ldap.identityStrategy }}</property>
+        <property name="Authentication Expiration">12 hours</property>
+    </provider>
+</loginIdentityProviders>
+LDAP_LOGIN_EOF
     
-    # Configure LDAP provider in login-identity-providers.xml
-    echo "Configuring login-identity-providers.xml for LDAP..."
-    
-    # Check if ldap-provider exists, if not create it
-    if ! xmlstarlet sel -t -v "//provider[identifier='ldap-provider']" 'conf/login-identity-providers.xml' > /dev/null 2>&1; then
-      echo "Creating ldap-provider in login-identity-providers.xml..."
-      # Add ldap-provider after removing single-user-provider
-      xmlstarlet ed --inplace \
-        --subnode "/loginIdentityProviders" \
-        --type elem -n "provider" \
-        'conf/login-identity-providers.xml'
-      
-      # Add identifier
-      xmlstarlet ed --inplace \
-        --subnode "//loginIdentityProviders/provider[last()]" \
-        --type elem -n "identifier" -v "ldap-provider" \
-        'conf/login-identity-providers.xml'
-      
-      # Add class
-      xmlstarlet ed --inplace \
-        --subnode "//loginIdentityProviders/provider[last()]" \
-        --type elem -n "class" -v "org.apache.nifi.ldap.LdapProvider" \
-        'conf/login-identity-providers.xml'
-    fi
-    
-    # Configure LDAP provider properties
-    # Helper function to add or update property
-    update_or_add_ldap_property() {
-      local prop_name="$1"
-      local prop_value="$2"
-      local file='conf/login-identity-providers.xml'
-      
-      if xmlstarlet sel -t -v "//provider[identifier='ldap-provider']/property[@name='$prop_name']" "$file" > /dev/null 2>&1; then
-        xmlstarlet ed --inplace \
-          --update "//provider[identifier='ldap-provider']/property[@name='$prop_name']" \
-          --value "$prop_value" \
-          "$file"
-      else
-        xmlstarlet ed --inplace \
-          --subnode "//provider[identifier='ldap-provider']" \
-          --type elem -n "property" -v "$prop_value" \
-          "$file"
-        xmlstarlet ed --inplace \
-          --insert "//provider[identifier='ldap-provider']/property[last()]" \
-          --type attr -n "name" -v "$prop_name" \
-          "$file"
-      fi
-    }
-    
-    update_or_add_ldap_property "Authentication Strategy" "{{ .Values.global.ldap.authenticationStrategy }}"
-    update_or_add_ldap_property "Manager DN" "{{ .Values.global.ldap.manager.distinguishedName }}"
-    update_or_add_ldap_property "Manager Password" "${LDAP_MANAGER_PASSWORD}"
-    update_or_add_ldap_property "Referral Strategy" "FOLLOW"
-    update_or_add_ldap_property "Connect Timeout" "10 secs"
-    update_or_add_ldap_property "Read Timeout" "10 secs"
-    update_or_add_ldap_property "Url" "{{ .Values.global.ldap.url }}"
-    update_or_add_ldap_property "User Search Base" "{{ .Values.global.ldap.userSearchBase }}"
-    update_or_add_ldap_property "User Search Filter" "{{ .Values.global.ldap.userSearchFilter }}"
-    update_or_add_ldap_property "Identity Strategy" "{{ .Values.global.ldap.identityStrategy }}"
-    update_or_add_ldap_property "Authentication Expiration" "12 hours"
+    # Replace password placeholder with actual value (avoids issues with special chars in heredoc)
+    sed -i "s|LDAP_MANAGER_PASSWORD_PLACEHOLDER|${LDAP_MANAGER_PASSWORD}|g" 'conf/login-identity-providers.xml'
     
     {{- if or (eq .Values.global.ldap.authenticationStrategy "LDAPS") (eq .Values.global.ldap.authenticationStrategy "START_TLS") }}
-    update_or_add_ldap_property "TLS - Protocol" "{{ .Values.global.ldap.tlsProtocol }}"
-    update_or_add_ldap_property "TLS - Keystore" "${LDAP_TLS_KEYSTORE}"
-    update_or_add_ldap_property "TLS - Keystore Password" "${LDAP_TLS_KEYSTORE_PASSWORD}"
-    update_or_add_ldap_property "TLS - Keystore Type" "PKCS12"
-    update_or_add_ldap_property "TLS - Truststore" "${LDAP_TLS_TRUSTSTORE}"
-    update_or_add_ldap_property "TLS - Truststore Password" "${LDAP_TLS_TRUSTSTORE_PASSWORD}"
-    update_or_add_ldap_property "TLS - Truststore Type" "PKCS12"
+    # Configure TLS settings for secure LDAP
+    xmlstarlet ed --inplace \
+      --update "//provider[identifier='ldap-provider']/property[@name='TLS - Keystore']" \
+      --value "${LDAP_TLS_KEYSTORE}" \
+      'conf/login-identity-providers.xml'
+    xmlstarlet ed --inplace \
+      --update "//provider[identifier='ldap-provider']/property[@name='TLS - Keystore Password']" \
+      --value "${LDAP_TLS_KEYSTORE_PASSWORD}" \
+      'conf/login-identity-providers.xml'
+    xmlstarlet ed --inplace \
+      --update "//provider[identifier='ldap-provider']/property[@name='TLS - Keystore Type']" \
+      --value "PKCS12" \
+      'conf/login-identity-providers.xml'
+    xmlstarlet ed --inplace \
+      --update "//provider[identifier='ldap-provider']/property[@name='TLS - Truststore']" \
+      --value "${LDAP_TLS_TRUSTSTORE}" \
+      'conf/login-identity-providers.xml'
+    xmlstarlet ed --inplace \
+      --update "//provider[identifier='ldap-provider']/property[@name='TLS - Truststore Password']" \
+      --value "${LDAP_TLS_TRUSTSTORE_PASSWORD}" \
+      'conf/login-identity-providers.xml'
+    xmlstarlet ed --inplace \
+      --update "//provider[identifier='ldap-provider']/property[@name='TLS - Truststore Type']" \
+      --value "PKCS12" \
+      'conf/login-identity-providers.xml'
     {{- end }}
     
     echo "login-identity-providers.xml configured successfully."
@@ -149,10 +139,7 @@ data:
     prop_replace 'nifi.security.user.authorizer' 'managed-authorizer'
     prop_replace 'nifi.security.user.login.identity.provider' 'ldap-provider'
     
-    # IMPORTANT: Let NiFi manage authorization files automatically
-    # When users.xml/authorizations.xml don't exist, NiFi creates them with Initial Admin Identity
-    # We should NOT delete them on each restart - that breaks persistent permissions
-    echo "LDAP configured. NiFi will auto-create authorization files if needed."
+    echo "LDAP authentication configured."
     
     {{- else }}
     echo "Enabling Single User (Basic) authentication"
@@ -339,17 +326,28 @@ data:
         echo "    </policy>" >> "$AUTH_XML"
         
         # Root Process Group policies (if flow exists)
+        # CRITICAL: Ingress and all nodes need access to /process-groups/{ROOT_ID}
+        # because when users access via ingress, the request is proxied through cluster nodes
         if [ -n "$ROOT_ID" ]; then
             echo "Adding root process group policies for ROOT_ID: $ROOT_ID"
             
+            # /process-groups/{ROOT_ID} - Admin, Ingress, and all nodes (for proxied requests)
             P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-R")
             echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
             echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            echo "      <user identifier=\"$INGRESS_ID\"/>" >> "$AUTH_XML"
+            {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+            echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+            {{- end }}
             echo "    </policy>" >> "$AUTH_XML"
             
             P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-W")
             echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
             echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            echo "      <user identifier=\"$INGRESS_ID\"/>" >> "$AUTH_XML"
+            {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+            echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+            {{- end }}
             echo "    </policy>" >> "$AUTH_XML"
             
             P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")
@@ -371,11 +369,17 @@ data:
             P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")
             echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
             echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+            echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+            {{- end }}
             echo "    </policy>" >> "$AUTH_XML"
             
             P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")
             echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">" >> "$AUTH_XML"
             echo "      <user identifier=\"$ADMIN_ID\"/>" >> "$AUTH_XML"
+            {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+            echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>" >> "$AUTH_XML"
+            {{- end }}
             echo "    </policy>" >> "$AUTH_XML"
         else
             echo "No flow.json.gz found yet. Root group policies will be added by NiFi automatically."
@@ -396,6 +400,8 @@ data:
             if ! grep -q "process-groups/$ROOT_ID" "$AUTH_XML"; then
                 echo "Adding missing root group policies for ROOT_ID: $ROOT_ID"
                 ADMIN_ID=$(GET_UUID "user-{{ .Values.global.ldap.initialAdminIdentity }}")
+                INGRESS_DN="CN={{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
+                INGRESS_ID=$(GET_UUID "user-$INGRESS_DN")
                 {{- range $i := until (int .Values.global.nifi.nodeCount) }}
                 NODE{{ $i }}_DN="CN={{ include "nifi.fullname" $ }}-{{ $i }}.{{ include "nifi.fullname" $ }}.{{ $.Release.Namespace }}"
                 NODE{{ $i }}_ID=$(GET_UUID "user-$NODE{{ $i }}_DN")
@@ -403,14 +409,23 @@ data:
                 
                 # Create temporary file with new policies
                 {
+                    # /process-groups/{ROOT_ID} - Admin, Ingress, and all nodes
                     P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-R")
                     echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">"
                     echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    echo "      <user identifier=\"$INGRESS_ID\"/>"
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                    {{- end }}
                     echo "    </policy>"
                     
                     P_ID=$(GET_UUID "policy-/process-groups/$ROOT_ID-W")
                     echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/process-groups/$ROOT_ID\">"
                     echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    echo "      <user identifier=\"$INGRESS_ID\"/>"
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                    {{- end }}
                     echo "    </policy>"
                     
                     P_ID=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")
@@ -432,11 +447,17 @@ data:
                     P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")
                     echo "    <policy action=\"R\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">"
                     echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                    {{- end }}
                     echo "    </policy>"
                     
                     P_ID=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")
                     echo "    <policy action=\"W\" identifier=\"$P_ID\" resource=\"/operation/process-groups/$ROOT_ID\">"
                     echo "      <user identifier=\"$ADMIN_ID\"/>"
+                    {{- range $i := until (int .Values.global.nifi.nodeCount) }}
+                    echo "      <user identifier=\"$NODE{{ $i }}_ID\"/>"
+                    {{- end }}
                     echo "    </policy>"
                 } > /tmp/new_policies.xml
                 
