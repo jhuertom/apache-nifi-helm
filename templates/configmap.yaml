@@ -107,9 +107,9 @@ data:
         
         # 1. Generate users.xml
         cat > "$USERS_XML" <<EOF
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<tenants>
-  <users>
+    <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+    <tenants>
+      <users>
 EOF
         # Add Cluster Nodes
         for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
@@ -129,15 +129,15 @@ EOF
         echo "    <user identifier=\"$ADMIN_UUID\" identity=\"$ADMIN_DN\"/>" >> "$USERS_XML"
         {{- end }}
         
-        echo "  </users>
-  <groups/>
-</tenants>" >> "$USERS_XML"
+        echo "      </users>
+      <groups/>
+    </tenants>" >> "$USERS_XML"
 
         # 2. Generate authorizations.xml
         cat > "$AUTH_XML" <<EOF
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<authorizations>
-  <policies>
+    <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+    <authorizations>
+      <policies>
 EOF
         # Get list of all admin UUIDs
         ALL_ADMIN_IDS="$INGRESS_UUID"
@@ -184,8 +184,8 @@ EOF
             fi
         fi
 
-        echo "  </policies>
-</authorizations>" >> "$AUTH_XML"
+        echo "      </policies>
+    </authorizations>" >> "$AUTH_XML"
         echo "Security registry provisioned successfully."
     fi
 
