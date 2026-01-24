@@ -233,6 +233,13 @@ data:
     {{- end }}
     {{- end }}
     
+    # Configure User Identity Attribute to align with authentication (usually uid or sAMAccountName)
+    # This prevents identity conflicts where authentication sees "user" but authorization sees "DN"
+    xmlstarlet ed --inplace \
+      --update "//userGroupProvider[identifier='ldap-user-group-provider']/property[@name='User Identity Attribute']" \
+      --value 'uid' \
+      "${authorizers_file}"
+
     # Enable composite provider
     echo "Enabling composite-configurable-user-group-provider..."
     sed -i '/<!-- To enable the composite-configurable-user-group-provider remove 2 lines. This is 1 of 2./d' "${authorizers_file}"
@@ -251,15 +258,15 @@ data:
     # Use composite provider
     echo "Configuring managed-authorizer to use composite provider..."
     sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
-    
-    # Clear Initial Admin Identity - policies will be added by ldap-admin-setup Job after first login
-    echo "Clearing Initial Admin Identity (will be configured by Job)..."
+
+    # Set Initial Admin Identity - NiFi will create policies on first start
+    echo "Setting Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value '' \
+      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
       "${authorizers_file}"
     
-    echo "LDAP configuration completed. Login with {{ .Values.global.ldap.initialAdminIdentity }} to trigger policy setup."
+    echo "LDAP configuration completed."
     {{- end }}
 
     {{- /* Set file and directory paths to persistent locations */}}
