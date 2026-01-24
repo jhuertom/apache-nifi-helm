@@ -270,27 +270,33 @@ data:
                 echo "Adding missing root group policies for ROOT_ID: $ROOT_ID"
                 GROUP_ID=$(GET_UUID "group-NiFi Administrators")
                 
-                # Create temporary file with new policies
-                cat > /tmp/new_policies.xml << EOFPOLICIES
-    <policy action="R" identifier="$(GET_UUID "policy-/process-groups/$ROOT_ID-R")" resource="/process-groups/$ROOT_ID">
-      <group identifier="$GROUP_ID"/>
-    </policy>
-    <policy action="W" identifier="$(GET_UUID "policy-/process-groups/$ROOT_ID-W")" resource="/process-groups/$ROOT_ID">
-      <group identifier="$GROUP_ID"/>
-    </policy>
-    <policy action="R" identifier="$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")" resource="/data/process-groups/$ROOT_ID">
-      <group identifier="$GROUP_ID"/>
-    </policy>
-    <policy action="W" identifier="$(GET_UUID "policy-/data/process-groups/$ROOT_ID-W")" resource="/data/process-groups/$ROOT_ID">
-      <group identifier="$GROUP_ID"/>
-    </policy>
-    <policy action="R" identifier="$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")" resource="/operation/process-groups/$ROOT_ID">
-      <group identifier="$GROUP_ID"/>
-    </policy>
-    <policy action="W" identifier="$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")" resource="/operation/process-groups/$ROOT_ID">
-      <group identifier="$GROUP_ID"/>
-    </policy>
-EOFPOLICIES
+                # Generate policy IDs
+                P1=$(GET_UUID "policy-/process-groups/$ROOT_ID-R")
+                P2=$(GET_UUID "policy-/process-groups/$ROOT_ID-W")
+                P3=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-R")
+                P4=$(GET_UUID "policy-/data/process-groups/$ROOT_ID-W")
+                P5=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-R")
+                P6=$(GET_UUID "policy-/operation/process-groups/$ROOT_ID-W")
+                
+                # Create temporary file with new policies using echo
+                echo "    <policy action=\"R\" identifier=\"$P1\" resource=\"/process-groups/$ROOT_ID\">" > /tmp/new_policies.xml
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> /tmp/new_policies.xml
+                echo "    </policy>" >> /tmp/new_policies.xml
+                echo "    <policy action=\"W\" identifier=\"$P2\" resource=\"/process-groups/$ROOT_ID\">" >> /tmp/new_policies.xml
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> /tmp/new_policies.xml
+                echo "    </policy>" >> /tmp/new_policies.xml
+                echo "    <policy action=\"R\" identifier=\"$P3\" resource=\"/data/process-groups/$ROOT_ID\">" >> /tmp/new_policies.xml
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> /tmp/new_policies.xml
+                echo "    </policy>" >> /tmp/new_policies.xml
+                echo "    <policy action=\"W\" identifier=\"$P4\" resource=\"/data/process-groups/$ROOT_ID\">" >> /tmp/new_policies.xml
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> /tmp/new_policies.xml
+                echo "    </policy>" >> /tmp/new_policies.xml
+                echo "    <policy action=\"R\" identifier=\"$P5\" resource=\"/operation/process-groups/$ROOT_ID\">" >> /tmp/new_policies.xml
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> /tmp/new_policies.xml
+                echo "    </policy>" >> /tmp/new_policies.xml
+                echo "    <policy action=\"W\" identifier=\"$P6\" resource=\"/operation/process-groups/$ROOT_ID\">" >> /tmp/new_policies.xml
+                echo "      <group identifier=\"$GROUP_ID\"/>" >> /tmp/new_policies.xml
+                echo "    </policy>" >> /tmp/new_policies.xml
                 
                 # Insert before </policies> using sed with file read
                 sed -i '/<\/policies>/e cat /tmp/new_policies.xml' "$AUTH_XML"
