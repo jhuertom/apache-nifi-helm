@@ -88,10 +88,7 @@ data:
     xmlstarlet ed --inplace --update "/stateManagement/cluster-provider[id='kubernetes-provider']/property[@name='ConfigMap Namespace']" --value '{{ include "nifi.stateManagementNamespace" . }}' "conf/state-management.xml"
     {{- end }}
 
-    # Absolute path for persistent configuration
-    PERSISTENT_CONF_DIR='/opt/nifi/nifi-current/persistent_conf'
-
-    # Function to list nodes and users for different roles
+    # Function to list nodes, users, and groups for different roles
     list_identities () {
       local role=$1
       local results=""
@@ -101,10 +98,22 @@ data:
       done
       results="${results}<property name=\"$role Node-Ingress\">CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
       
-      # Seed LDAP Admin to Initial User Identity Role for bootstrap
+      # Role-specific additions
       if [ "$role" == "Initial User Identity" ]; then
         {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
         results="${results}<property name=\"$role LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
+        {{- end }}
+      elif [ "$role" == "Initial Group Identity" ]; then
+        # Create a bootstrap admin group
+        results="${results}<property name=\"$role NiFi Admins\">NiFi Admins</property>\n"
+      elif [ "$role" == "NiFi Admins" ]; then
+        # Add members to the NiFi Admins group
+        for (( i = 0; i < {{ .Values.global.nifi.nodeCount }}; i++ )); do
+          results="${results}<property name=\"User Identity Node-${i}\">CN={{ include "nifi.fullname" . }}-${i}.{{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
+        done
+        results="${results}<property name=\"User Identity Node-Ingress\">CN={{ include "nifi.fullname" . }}.{{ .Release.Namespace }}</property>\n"
+        {{- if and (eq .Values.global.ldap.enabled true) .Values.global.ldap.initialAdminIdentity }}
+        results="${results}<property name=\"User Identity LdapAdmin\">{{ .Values.global.ldap.initialAdminIdentity }}</property>\n"
         {{- end }}
       fi
       
@@ -112,6 +121,9 @@ data:
     }
     list_identities 'Node Identity'
     list_identities 'Initial User Identity'
+    list_identities 'Initial Group Identity'
+    # Seed members into the group definition
+    list_identities 'NiFi Admins'
 
     {{- if and .Values.global.ldap.enabled .Values.global.ldap.initialAdminIdentity }}
     # We do NOT add the LDAP admin as Initial User Identity in file provider anymore.
@@ -270,79 +282,25 @@ data:
     echo "Configuring managed-authorizer to use composite provider..."
     sed -i -E "s|<property name=\"User Group Provider\">file-user-group-provider</property>|<property name=\"User Group Provider\">composite-configurable-user-group-provider</property>|g" "${authorizers_file}"
 
-    # Set Initial Admin Identity - NiFi will create policies on first start
-    echo "Setting Initial Admin Identity: {{ .Values.global.ldap.initialAdminIdentity }}"
+    # Clear Initial Admin Identity (using group instead)
     xmlstarlet ed --inplace \
       --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Identity']" \
-      --value '{{ .Values.global.ldap.initialAdminIdentity }}' \
+      --value '' \
       "${authorizers_file}"
 
-    # RE-ENABLE AUTOMATED PATCHER for Root Group and Node synchronization
-    (
-        set +e
-        AUTH_XML="${PERSISTENT_CONF_DIR}/{{ .Values.persistence.config.files.authorizations }}"
-        USERS_XML="${PERSISTENT_CONF_DIR}/{{ .Values.persistence.config.files.users }}"
-        FLOW_FILE="${PERSISTENT_CONF_DIR}/{{ .Values.persistence.config.files.flowJson }}"
-        
-        while true; do
-            if [ -f "$AUTH_XML" ] && [ -f "$USERS_XML" ]; then
-                echo "[PATCHER] XML files found at $PERSISTENT_CONF_DIR. Patching..."
-                
-                # Get Admin UUID
-                ADMIN_ID=$(xmlstarlet sel -t -v "//user[@identity='{{ .Values.global.ldap.initialAdminIdentity }}']/@identifier" "$USERS_XML" 2>/dev/null)
-                # Get Node UUIDs (any identity starting with CN=)
-                NODE_IDS=$(xmlstarlet sel -t -v "//user[starts-with(@identity, 'CN=')]/@identifier" "$USERS_XML" 2>/dev/null)
-                
-                [ -z "$ADMIN_ID" ] && echo "[PATCHER] Admin not found yet..." && sleep 10 && continue
+    # Set Initial Admin Group - NiFi will grant all permissions to this group
+    echo "Setting Initial Admin Group: NiFi Admins"
+    xmlstarlet ed --inplace \
+      --update "//accessPolicyProvider[identifier='file-access-policy-provider']/property[@name='Initial Admin Group']" \
+      --value 'NiFi Admins' \
+      "${authorizers_file}"
 
-                # Collective list for all admin tasks
-                ALL_ADMINS="$ADMIN_ID $NODE_IDS"
+    # Re-enable persistent conf paths in authorizers.xml
+    conf_dir='/opt/nifi/nifi-current/persistent_conf'
+    sed -i -E "s|(<property name=\"Authorizations File\">).*(</property>)|\1${conf_dir}/authorizations.xml\2|g" "${authorizers_file}"
+    sed -i -E "s|(<property name=\"Users File\">).*(</property>)|\1${conf_dir}/users.xml\2|g" "${authorizers_file}"
 
-                GRANT_DET_POLICY() {
-                    local RES=$1
-                    local ACT=$2
-                    local IDS=$3
-                    local DET_ID=$(echo -n "policy-${RES}-${ACT}" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/')
-                    
-                    if ! grep -q "resource=\"$RES\"" "$AUTH_XML"; then
-                        sed -i "/<\/policies>/i\    <policy action=\"$ACT\" identifier=\"$DET_ID\" resource=\"$RES\">\n    </policy>" "$AUTH_XML"
-                    fi
-                    
-                    for UID in $IDS; do
-                        if ! xmlstarlet sel -t -c "//policy[@resource='$RES' and @action='$ACT']" "$AUTH_XML" | grep -q "$UID"; then
-                            sed -i "/resource=\"$RES\"/a \      <user identifier=\"$UID\"/>" "$AUTH_XML"
-                        fi
-                    done
-                }
-
-                # CRITICAL: Grant nodes access to /flow and /controller for replication
-                GRANT_DET_POLICY "/flow" "R" "$ALL_ADMINS"
-                GRANT_DET_POLICY "/flow" "W" "$ALL_ADMINS"
-                GRANT_DET_POLICY "/controller" "R" "$ALL_ADMINS"
-                GRANT_DET_POLICY "/controller" "W" "$ALL_ADMINS"
-                GRANT_DET_POLICY "/proxy" "W" "$ALL_ADMINS"
-
-                # Patch Root Group if exists
-                if [ -f "$FLOW_FILE" ]; then
-                    ROOT_GROUP_ID=$(zcat "$FLOW_FILE" 2>/dev/null | jq -r '.rootGroup.identifier' 2>/dev/null || echo "")
-                    if [ -n "$ROOT_GROUP_ID" ] && [ "$ROOT_GROUP_ID" != "null" ]; then
-                        echo "[PATCHER] Found Root Group $ROOT_GROUP_ID. Patching..."
-                        GRANT_DET_POLICY "/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
-                        GRANT_DET_POLICY "/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
-                        GRANT_DET_POLICY "/data/process-groups/$ROOT_GROUP_ID" "R" "$ALL_ADMINS"
-                        GRANT_DET_POLICY "/data/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
-                        GRANT_DET_POLICY "/operation/process-groups/$ROOT_GROUP_ID" "W" "$ALL_ADMINS"
-                    fi
-                fi
-                echo "[PATCHER] Authorization patching complete."
-                break
-            fi
-            echo "[PATCHER] Waiting for files in $PERSISTENT_CONF_DIR..."
-            sleep 10
-        done
-    ) &
-    
-    echo "LDAP configuration completed."
+    echo "LDAP configuration completed with native group bootstrap."
     {{- end }}
 
     {{- /* Set file and directory paths to persistent locations */}}
