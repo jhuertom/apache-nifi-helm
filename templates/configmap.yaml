@@ -99,6 +99,12 @@ data:
       echo -n "$1" | md5sum | awk '{print $1}' | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
     }
 
+    # INITIAL REGISTRY PROVISIONING
+    # If users.xml is missing, we create a complete, synchronized state for the whole cluster.
+    if [ ! -f "$USERS_XML" ]; then
+        echo "Provisioning initial security registry..."
+        mkdir -p "$PERSISTENT_CONF_DIR"
+
         # BUILD IDENTITIES LIST
         ADMIN_IDENTITIES=""
         # NiFi Nodes
